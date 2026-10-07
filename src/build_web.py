@@ -93,12 +93,53 @@ def rgba_from_hex(color: str, alpha: int = 225) -> tuple[int, int, int, int]:
     )
 
 
-def save_rgba(mask: np.ndarray, color: str, path: Path) -> None:
+def mask_to_rgba(mask: np.ndarray, color: str) -> np.ndarray:
     image = np.zeros((*mask.shape, 4), dtype=np.uint8)
     image[mask] = rgba_from_hex(color)
-    Image.fromarray(image, mode="RGBA").save(
-        path, format="PNG", optimize=True, compress_level=9
-    )
+    return image
+
+
+def write_tiles(
+    pixels: np.ndarray,
+    transform: rasterio.Affine,
+    crs: str,
+    stem: str,
+    image_dir: Path,
+    max_px: int,
+) -> list[dict[str, Any]]:
+    """Split an RGBA image into PNG tiles of at most max_px per side.
+
+    Browsers cannot upload WebGL textures larger than their maximum texture
+    size (often 4096 on phones and 8192 on laptops), so a single
+    country-wide 100 m image renders as a blank rectangle on many devices.
+    Fully transparent tiles are skipped.
+    """
+    for old in image_dir.glob(f"{stem}*.png"):
+        if old.stem == stem or old.stem.startswith(f"{stem}_t"):
+            old.unlink()
+    height, width = pixels.shape[:2]
+    row_edges = np.linspace(0, height, math.ceil(height / max_px) + 1).round().astype(int)
+    col_edges = np.linspace(0, width, math.ceil(width / max_px) + 1).round().astype(int)
+    tiles = []
+    for r, (top, bottom) in enumerate(zip(row_edges[:-1], row_edges[1:])):
+        for c, (left, right) in enumerate(zip(col_edges[:-1], col_edges[1:])):
+            tile = pixels[top:bottom, left:right]
+            if not tile[..., 3].any():
+                continue
+            name = f"{stem}_t{r}_{c}.png"
+            Image.fromarray(np.ascontiguousarray(tile), mode="RGBA").save(
+                image_dir / name, format="PNG", optimize=True, compress_level=9
+            )
+            tile_transform = transform * rasterio.Affine.translation(left, top)
+            tiles.append(
+                {
+                    "url": f"data/layers/{name}",
+                    "bounds": output_bounds_wgs84(
+                        tile_transform, right - left, bottom - top, crs
+                    ),
+                }
+            )
+    return tiles
 
 
 def create_cost_image(
@@ -107,8 +148,7 @@ def create_cost_image(
     width: int,
     height: int,
     destination_crs: str,
-    output: Path,
-) -> tuple[float, float]:
+) -> tuple[np.ndarray, float, float]:
     source_data = source.read(1)
     downsampled = np.full((height, width), np.nan, dtype=np.float32)
     reproject(
@@ -148,10 +188,7 @@ def create_cost_image(
         pixels[..., channel][midpoint] = lower.astype(np.uint8)
         pixels[..., channel][upper_half] = upper.astype(np.uint8)
     pixels[..., 3][valid] = 205
-    Image.fromarray(pixels, mode="RGBA").save(
-        output, format="PNG", optimize=True, compress_level=9
-    )
-    return low, high
+    return pixels, low, high
 
 
 def output_bounds_wgs84(
@@ -295,14 +332,20 @@ def build_web(
             display_height,
             display_crs,
         )
-        cost_min, cost_max = create_cost_image(
+        max_px = int(config.get("web", {}).get("max_image_px", 4096))
+        if max_px < 256:
+            raise ValueError("web.max_image_px must be at least 256")
+        cost_pixels, cost_min, cost_max = create_cost_image(
             cost_source,
             display_transform,
             display_width,
             display_height,
             display_crs,
-            image_dir / "cost_surface.png",
         )
+        cost_tiles = write_tiles(
+            cost_pixels, display_transform, display_crs, "cost_surface", image_dir, max_px
+        )
+        del cost_pixels
         layers: list[dict[str, Any]] = []
         for class_name, (label, color, group) in LAYER_PRESENTATION.items():
             bit = config["class_bits"].get(class_name)
@@ -323,15 +366,21 @@ def build_web(
                 dst_nodata=0,
                 resampling=Resampling.max,
             )
-            image_path = image_dir / f"{class_name}.png"
-            save_rgba(destination_layer.astype(bool), color, image_path)
+            tiles = write_tiles(
+                mask_to_rgba(destination_layer.astype(bool), color),
+                display_transform,
+                display_crs,
+                class_name,
+                image_dir,
+                max_px,
+            )
             layers.append(
                 {
                     "id": class_name,
                     "label": label,
                     "group": group,
                     "color": color,
-                    "url": f"data/layers/{image_path.name}",
+                    "tiles": tiles,
                     "kind": "image",
                     "default_visible": False,
                     "score": class_score_label(config, class_name),
@@ -395,7 +444,7 @@ def build_web(
         "display_resolution_m": display_resolution,
         "display_crs": display_crs,
         "bounds": corners,
-        "cost_image": "data/layers/cost_surface.png",
+        "cost_tiles": cost_tiles,
         "cost_range_percentile_2_98": [cost_min, cost_max],
         "cost_opacity": 0.58,
         "layers": layers,

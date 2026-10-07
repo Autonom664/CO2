@@ -92,23 +92,41 @@ function versioned(url) {
   return assetVersion ? `${url}?v=${assetVersion}` : url;
 }
 
+// Overlays are split into tiles no larger than the browser's maximum
+// texture size; each tile is its own image source with its own corners.
+function addImageTiles(map, prefix, tiles, opacity) {
+  const ids = [];
+  tiles.forEach((tile, index) => {
+    const sourceId = `${prefix}-${index}`;
+    const layerId = `${prefix}-raster-${index}`;
+    if (!map.getSource(sourceId)) {
+      map.addSource(sourceId, {
+        type: "image",
+        url: versioned(tile.url),
+        coordinates: tile.bounds,
+      });
+    }
+    if (!map.getLayer(layerId)) {
+      map.addLayer({
+        id: layerId,
+        type: "raster",
+        source: sourceId,
+        paint: { "raster-opacity": opacity, "raster-fade-duration": 0 },
+      }, map.getLayer("corridors-fill") ? "corridors-fill" : undefined);
+    }
+    ids.push(layerId);
+  });
+  return ids;
+}
+
+function imageLayerIds(map, prefix) {
+  return map.getStyle().layers
+    .map((layer) => layer.id)
+    .filter((id) => id.startsWith(`${prefix}-raster-`));
+}
+
 function addImageLayer(map, layer) {
-  if (!map.getSource(layer.id)) {
-    map.addSource(layer.id, {
-      type: "image",
-      url: versioned(layer.url),
-      coordinates: map.co2Bounds,
-    });
-  }
-  if (!map.getLayer(`${layer.id}-raster`)) {
-    map.addLayer({
-      id: `${layer.id}-raster`,
-      type: "raster",
-      source: layer.id,
-      paint: { "raster-opacity": 0.92, "raster-fade-duration": 0 },
-    });
-  }
-  map.setLayoutProperty(`${layer.id}-raster`, "visibility", "visible");
+  setLayersVisible(map, addImageTiles(map, layer.id, layer.tiles || [], 0.92), true);
 }
 
 function addGeoJsonLayer(map, layer, data) {
@@ -276,9 +294,7 @@ function setupInputLayers(map, layers) {
         layer.default_visible,
         (visible) => {
           if (visible) addImageLayer(map, layer);
-          else if (map.getLayer(`${layer.id}-raster`)) {
-            map.setLayoutProperty(`${layer.id}-raster`, "visibility", "none");
-          }
+          else setLayersVisible(map, imageLayerIds(map, layer.id), false);
         },
         layer.score,
       ));
@@ -518,29 +534,15 @@ async function startMap() {
     attributionControl: true,
   });
   map.co2Bounds = manifest.bounds;
+  window.co2Map = map; // Handle for debugging and validation/ui_smoke.py.
   map.addControl(new maplibregl.NavigationControl(), "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
   map.once("load", () => {
-    map.addSource("cost-surface", {
-      type: "image",
-      url: versioned(manifest.cost_image),
-      coordinates: manifest.bounds,
-    });
-    map.addLayer({
-      id: "cost-surface-layer",
-      type: "raster",
-      source: "cost-surface",
-      paint: {
-        "raster-opacity": manifest.cost_opacity,
-        "raster-fade-duration": 0,
-      },
-    });
+    const costLayerIds = addImageTiles(
+      map, "cost-surface", manifest.cost_tiles || [], manifest.cost_opacity,
+    );
     document.getElementById("cost-toggle").addEventListener("change", (event) => {
-      map.setLayoutProperty(
-        "cost-surface-layer",
-        "visibility",
-        event.target.checked ? "visible" : "none",
-      );
+      setLayersVisible(map, costLayerIds, event.target.checked);
     });
     setupInputLayers(map, manifest.layers);
     setupRoutes(map, manifest);

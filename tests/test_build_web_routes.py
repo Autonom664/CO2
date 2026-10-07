@@ -12,6 +12,7 @@ import rasterio
 import yaml
 from PIL import Image
 from rasterio.transform import from_origin
+from pyproj import Transformer
 from shapely.geometry import LineString, Point
 
 from src import build_web
@@ -317,19 +318,53 @@ class RouteManifestTests(WebFixture):
     def test_every_overlay_shares_the_display_grid(self) -> None:
         manifest = self.build()
         sizes = set()
-        for path in [manifest["cost_image"]] + [
-            layer["url"] for layer in manifest["layers"]
-        ]:
-            with Image.open(self.output / path) as image:
+        tiles = manifest["cost_tiles"] + [
+            tile for layer in manifest["layers"] for tile in layer["tiles"]
+        ]
+        for tile in tiles:
+            self.assertEqual(tile["bounds"], manifest["bounds"])
+            with Image.open(self.output / tile["url"]) as image:
                 sizes.add(image.size)
         self.assertEqual(len(sizes), 1)
-        with Image.open(self.output / "data/layers/open_sea.png") as image:
+        sea = next(layer for layer in manifest["layers"] if layer["id"] == "open_sea")
+        with Image.open(self.output / sea["tiles"][0]["url"]) as image:
             alpha = np.asarray(image)[..., 3]
         # Sea occupies the eastern half of the synthetic grid.
         columns = np.nonzero(alpha.any(axis=0))[0]
         self.assertGreater(columns.min(), 0)
         self.assertEqual(columns.max(), alpha.shape[1] - 1)
+        # Empty layers publish no tiles at all.
+        empty = next(layer for layer in manifest["layers"] if layer["id"] == "lake")
+        self.assertEqual(empty["tiles"], [])
 
+
+class TileTests(unittest.TestCase):
+    def test_large_image_is_split_within_limit_and_tiles_abut(self) -> None:
+        pixels = np.zeros((600, 1000, 4), dtype=np.uint8)
+        pixels[..., 3] = 200
+        pixels[:300, :500, 3] = 0  # top-left quarter empty
+        transform = from_origin(1_000_000, 7_500_000, 250, 250)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "layer.png").write_bytes(b"stale")
+            tiles = build_web.write_tiles(
+                pixels, transform, "EPSG:3857", "layer", directory, 256
+            )
+            self.assertFalse((directory / "layer.png").exists())
+            files = sorted(directory.glob("layer_t*.png"))
+            self.assertEqual(len(files), len(tiles))
+            for path in files:
+                with Image.open(path) as image:
+                    self.assertLessEqual(max(image.size), 256)
+        # 3 rows of 200 px × 4 columns of 250 px. The empty block (rows
+        # 0–300, columns 0–500) fully covers only the first two tiles of row 0.
+        self.assertEqual(len(tiles), 12 - 2)
+        to_mercator = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+        by_name = {t["url"].rsplit("/", 1)[-1]: t["bounds"] for t in tiles}
+        left = [to_mercator.transform(*c) for c in by_name["layer_t2_0.png"]]
+        right = [to_mercator.transform(*c) for c in by_name["layer_t2_1.png"]]
+        self.assertAlmostEqual(left[1][0], right[0][0], places=3)
+        self.assertAlmostEqual(left[1][0], 1_000_000 + 250 * 250, places=3)
 
 if __name__ == "__main__":
     unittest.main()

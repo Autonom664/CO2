@@ -123,7 +123,11 @@ grid. This makes their raster pixels line up with the Web Mercator basemap.
 The default display grid is 100 m; this is a deliberate web-performance compromise: the
 processed GeoPackages preserve the original features, while the browser avoids
 loading millions of building/road GeoJSON features. Image sources are loaded
-once when toggled and are not re-requested on zoom. Routes and hotspots remain
+once when toggled and are not re-requested on zoom. Each overlay is cut into PNG tiles of
+at most `web.max_image_px` (default 4096) pixels per side, and fully
+transparent tiles are skipped. A single country-wide 100 m image (about
+9,200 × 7,400 px) exceeds the WebGL texture limit of most phones and many
+laptops, and then renders as a blank rectangle. Routes and hotspots remain
 vector GeoJSON layers; route lines are simplified to `web.route_simplify_m`
 (default 25 m) for display only, and their attributes come unchanged from
 `routing.py`. The sidebar lists routes by accumulated cost, filterable by

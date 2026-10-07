@@ -102,8 +102,8 @@ class BuildWebTests(unittest.TestCase):
             )
             self.assertFalse(manifest["routes_available"])
             self.assertEqual(manifest["display_resolution_m"], 250)
-            self.assertTrue((result / "data" / "layers" / "cost_surface.png").exists())
-            self.assertTrue((result / "data" / "layers" / "road_crossing.png").exists())
+            self.assertTrue((result / "data" / "layers" / "cost_surface_t0_0.png").exists())
+            self.assertTrue((result / "data" / "layers" / "road_crossing_t0_0.png").exists())
             self.assertEqual(manifest["display_crs"], "EPSG:3857")
             image_paths = list((result / "data" / "layers").glob("*.png"))
             with Image.open(image_paths[0]) as reference:
