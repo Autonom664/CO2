@@ -5,6 +5,7 @@ const statusElement = document.getElementById("status");
 const loadingElement = document.getElementById("map-loading");
 const sidebar = document.getElementById("sidebar");
 let assetVersion = "";
+let selectedRouteKey = "";
 const routeLayerIds = {
   routes: "pair-routes",
   minimum_spanning_network: "mst-network",
@@ -314,9 +315,13 @@ function selectRoute(map, feature, { zoom = true, popup = true } = {}) {
   for (const id of routeLayerIds.corridors) {
     if (map.getLayer(id)) map.setFilter(id, pairFilter);
   }
+  selectedRouteKey = routeKey(properties);
   for (const row of document.querySelectorAll(".route-row")) {
-    row.classList.toggle("selected", row.dataset.routeKey === routeKey(properties));
+    row.classList.toggle("selected", row.dataset.routeKey === selectedRouteKey);
   }
+  const url = new URL(window.location.href);
+  url.searchParams.set("route", `${properties.from_id},${properties.to_id}`);
+  window.history.replaceState(null, "", url);
   if (zoom) {
     map.fitBounds(geometryBounds(feature.geometry), { padding: 60, maxZoom: 10 });
   }
@@ -361,7 +366,7 @@ function setupRouteList(map, routes, networkKeys) {
       const key = routeKey(properties);
       const row = document.createElement("button");
       row.type = "button";
-      row.className = "route-row";
+      row.className = key === selectedRouteKey ? "route-row selected" : "route-row";
       row.dataset.routeKey = key;
       const title = document.createElement("span");
       title.className = "route-title";
@@ -389,6 +394,16 @@ function setupRouteList(map, routes, networkKeys) {
   filter.addEventListener("change", render);
   render();
   document.getElementById("route-list-wrap").hidden = false;
+
+  const linked = new URLSearchParams(window.location.search).get("route");
+  if (linked) {
+    const [fromId, toId] = linked.split(",");
+    const feature = features.find((candidate) =>
+      candidate.properties.from_id === fromId && candidate.properties.to_id === toId
+    );
+    if (feature) selectRoute(map, feature);
+    else setStatus(`Route ${linked} from the link is not in this build.`, "warning");
+  }
 }
 
 async function setupRoutes(map, manifest) {
