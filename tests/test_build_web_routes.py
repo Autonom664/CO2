@@ -262,6 +262,45 @@ class RouteManifestTests(WebFixture):
         self.assertEqual(scores["open_land"], "1")
         self.assertEqual(scores["building_barrier"], "barrier")
 
+    def test_fifteen_hotspots_with_blank_optional_fields_are_preserved(self) -> None:
+        self.add_hotspots_and_routes()
+        roles = ["source"] * 8 + ["storage"] * 7
+        frame = gpd.GeoDataFrame(
+            {
+                "id": [f"h{index}" for index in range(15)],
+                "role": roles,
+                "ets_installation_id": ["342"] + [""] * 14,
+                "ets_verified_2024_t": [1_436_067] + [None] * 14,
+                "planned_capture_tpa": [1_250_000] + [None] * 14,
+                "capture_basis": ["DEA CCS contract"] + [""] * 14,
+                "capture_source_url": ["https://ens.dk/"] + [""] * 14,
+            },
+            geometry=[Point(9.0 + index / 10, 55.9) for index in range(15)],
+            crs="EPSG:4326",
+        )
+        (self.processed / "hotspots.geojson").unlink()
+        frame.to_file(self.processed / "hotspots.geojson", driver="GeoJSON")
+        source = json.loads(
+            (self.processed / "hotspots.geojson").read_text(encoding="utf-8")
+        )
+        manifest = self.build()
+        self.assertTrue(manifest["routes_available"])
+        published = json.loads(
+            (self.output / "data" / "hotspots.geojson").read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(published["features"]), 15)
+        self.assertEqual(
+            [feature["properties"] for feature in published["features"]],
+            [feature["properties"] for feature in source["features"]],
+        )
+        self.assertEqual(
+            sum(f["properties"]["role"] == "storage" for f in published["features"]),
+            7,
+        )
+        blank = published["features"][1]["properties"]
+        self.assertIsNone(blank["ets_verified_2024_t"])
+        self.assertEqual(blank["capture_basis"], "")
+
     def test_every_overlay_shares_the_display_grid(self) -> None:
         manifest = self.build()
         sizes = set()
