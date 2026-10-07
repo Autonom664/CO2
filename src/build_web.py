@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -375,6 +376,7 @@ def build_web(
 
     info = {
         "title": "Denmark CO₂ pipeline routing",
+        "version": int(time.time()),
         "crs": "EPSG:25832",
         "resolution_m": resolution,
         "display_resolution_m": display_resolution,

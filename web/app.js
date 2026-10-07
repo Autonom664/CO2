@@ -4,6 +4,7 @@ const mapElement = document.getElementById("map");
 const statusElement = document.getElementById("status");
 const loadingElement = document.getElementById("map-loading");
 const sidebar = document.getElementById("sidebar");
+let assetVersion = "";
 const routeLayerIds = {
   routes: "pair-routes",
   minimum_spanning_network: "mst-network",
@@ -72,11 +73,15 @@ function geometryMidpoint(geometry) {
   return line[Math.floor(line.length / 2)];
 }
 
+function versioned(url) {
+  return assetVersion ? `${url}?v=${assetVersion}` : url;
+}
+
 function addImageLayer(map, layer) {
   if (!map.getSource(layer.id)) {
     map.addSource(layer.id, {
       type: "image",
-      url: layer.url,
+      url: versioned(layer.url),
       coordinates: map.co2Bounds,
     });
   }
@@ -368,7 +373,7 @@ async function setupRoutes(map, manifest) {
   const data = {};
   await Promise.all(routeLayers.map(async (layer) => {
     try {
-      data[layer.id] = await fetchGeoJson(layer.url);
+      data[layer.id] = await fetchGeoJson(versioned(layer.url));
     } catch (error) {
       setStatus(`Route data could not be loaded: ${error.message}`, "warning");
     }
@@ -434,6 +439,7 @@ async function startMap() {
     return;
   }
 
+  assetVersion = manifest.version || "";
   setStatus(manifest.route_status, manifest.routes_available ? "ok" : "warning");
   document.getElementById("analysis-meta").textContent =
     `Open-data least-cost analysis · ${manifest.crs} · ${manifest.resolution_m} m grid`;
@@ -469,7 +475,7 @@ async function startMap() {
   map.once("load", () => {
     map.addSource("cost-surface", {
       type: "image",
-      url: manifest.cost_image,
+      url: versioned(manifest.cost_image),
       coordinates: manifest.bounds,
     });
     map.addLayer({
