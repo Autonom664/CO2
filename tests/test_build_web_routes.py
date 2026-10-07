@@ -86,7 +86,13 @@ def write_route_outputs(processed: Path) -> None:
             [properties], geometry=[zigzag], crs="EPSG:25832"
         ).to_crs("EPSG:4326").to_file(processed / name, driver="GeoJSON")
     gpd.GeoDataFrame(
-        {"id": ["src", "sink"], "role": ["source", "storage"]},
+        {
+            "id": ["src", "sink"],
+            "role": ["source", "storage"],
+            "ets_verified_2024_t": [1_436_067, None],
+            "planned_capture_tpa": [1_250_000, None],
+            "capture_basis": ["DEA CCS contract", ""],
+        },
         geometry=[Point(9.0, 55.9), Point(9.1, 55.9)],
         crs="EPSG:4326",
     ).to_file(processed / "hotspots.geojson", driver="GeoJSON")
@@ -245,6 +251,13 @@ class RouteManifestTests(WebFixture):
             (self.output / "data" / "routes.geojson").read_text(encoding="utf-8")
         )
         self.assertLess(len(routes["features"][0]["geometry"]["coordinates"]), 19)
+        hotspots = json.loads(
+            (self.output / "data" / "hotspots.geojson").read_text(encoding="utf-8")
+        )
+        source = hotspots["features"][0]["properties"]
+        self.assertEqual(source["ets_verified_2024_t"], 1_436_067)
+        self.assertEqual(source["planned_capture_tpa"], 1_250_000)
+        self.assertEqual(source["capture_basis"], "DEA CCS contract")
         scores = {layer["id"]: layer["score"] for layer in manifest["layers"]}
         self.assertEqual(scores["open_land"], "1")
         self.assertEqual(scores["building_barrier"], "barrier")

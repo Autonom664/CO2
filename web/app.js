@@ -57,6 +57,10 @@ function routeKey(properties) {
   return `${properties.from_id}→${properties.to_id}`;
 }
 
+function pairKey(properties) {
+  return [properties.from_id, properties.to_id].sort().join("↔");
+}
+
 function geometryBounds(geometry) {
   const lines = geometry.type === "MultiLineString"
     ? geometry.coordinates
@@ -344,7 +348,7 @@ function setupRouteList(map, routes, networkKeys) {
       if (cheapestBySource.get(properties.from_id) === key) {
         badges.insertAdjacentHTML("beforeend", '<span class="badge best" title="Lowest-cost storage option for this source">best</span>');
       }
-      if (networkKeys.has(key)) {
+      if (networkKeys.has(pairKey(properties))) {
         badges.insertAdjacentHTML("beforeend", '<span class="badge mst" title="Part of the minimum spanning network">network</span>');
       }
       row.appendChild(badges);
@@ -408,7 +412,7 @@ async function setupRoutes(map, manifest) {
   if (data.routes) {
     const networkKeys = new Set(
       (data.minimum_spanning_network?.features || [])
-        .map((feature) => routeKey(feature.properties))
+        .map((feature) => pairKey(feature.properties))
     );
     setupRouteList(map, data.routes, networkKeys);
     map.on("click", "pair-routes", (event) => {
