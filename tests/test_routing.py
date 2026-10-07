@@ -11,6 +11,7 @@ import rasterio
 import yaml
 from pyproj import Transformer
 from rasterio.transform import from_origin
+from shapely.geometry import LineString
 from skimage.graph import MCP_Geometric
 
 from src.routing import (
@@ -21,6 +22,7 @@ from src.routing import (
     minimum_spanning_tree,
     nearest_valid_cell,
     route_hotspots,
+    save_geojson,
 )
 
 
@@ -114,6 +116,27 @@ class RoutingTests(unittest.TestCase):
             {(route["properties"]["from_id"], route["properties"]["to_id"]) for route in tree},
             {("A", "B"), ("B", "C")},
         )
+
+    def test_geojson_omits_internal_mst_sort_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "routes.geojson"
+            feature = {
+                "geometry": LineString([(0, 0), (1, 1)]),
+                "properties": {
+                    "from_id": "A",
+                    "to_id": "B",
+                    "accumulated_cost": 2.35,
+                    "_accumulated_cost": 2.345678,
+                },
+            }
+
+            save_geojson([feature], path, "EPSG:25832")
+
+            with path.open(encoding="utf-8") as stream:
+                output = json.load(stream)
+        properties = output["features"][0]["properties"]
+        self.assertNotIn("_accumulated_cost", properties)
+        self.assertEqual(properties["accumulated_cost"], 2.35)
 
     def test_untyped_hotspots_keep_all_pairs_behavior(self) -> None:
         hotspots = [

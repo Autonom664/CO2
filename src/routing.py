@@ -390,7 +390,14 @@ def save_geojson(
     if not features:
         raise ValueError(f"Refusing to write empty route output: {path}")
     frame = gpd.GeoDataFrame(
-        [feature["properties"] for feature in features],
+        [
+            {
+                key: value
+                for key, value in feature["properties"].items()
+                if not key.startswith("_")
+            }
+            for feature in features
+        ],
         geometry=[feature["geometry"] for feature in features],
         crs=crs,
     ).to_crs("EPSG:4326")
