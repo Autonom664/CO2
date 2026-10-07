@@ -8,6 +8,7 @@ dependencies:
   - shapely>=2
   - rasterio
   - numpy
+  - scipy
   - pyarrow
   - scikit-image
   - pyyaml

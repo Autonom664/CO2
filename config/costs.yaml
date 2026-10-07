@@ -22,7 +22,10 @@ costs:
   open_land: 1
   open_sea: 2
   road_crossing: 3
+  road_major: 4
+  road_minor: 2
   railway_crossing: 5
+  forest: 6
   urban_area: 8
   building_barrier: 10
   natura2000: 9
@@ -30,6 +33,10 @@ costs:
   watercourse_crossing: 4
   lake: 7
   wetland: 7
+  dwelling_proximity:
+    enabled: true
+    max_distance_m: 200
+    max_score: 6
   population:
     enabled: true
     min_per_cell: 1.0  # people per 100 m source cell; scales with analysis-cell area
@@ -43,16 +50,25 @@ rasterization:
   polygon_all_touched: false
 
 layers:
-  roads:
-    file: infrastructure.gpkg
-    layer: roads
-    cost: road_crossing
+  roads_major:
+    file: phase_a_infrastructure.gpkg
+    layer: roads_major
+    cost: road_major
+    class_bit: road_major
+    geometry: linear
+    parallel_asset: true
+  roads_minor:
+    file: phase_a_infrastructure.gpkg
+    layer: roads_minor
+    cost: road_minor
+    class_bit: road_minor
     geometry: linear
   railways:
     file: infrastructure.gpkg
     layer: railways
     cost: railway_crossing
     geometry: linear
+    parallel_asset: true
   watercourses:
     file: infrastructure.gpkg
     layer: watercourses
@@ -64,6 +80,12 @@ layers:
     layer: urban_areas
     cost: urban_area
     geometry: polygon
+  forest:
+    file: phase_a_infrastructure.gpkg
+    layer: forest
+    cost: forest
+    geometry: polygon
+    surface: land
   lakes:
     file: water_and_urban.gpkg
     layer: lakes
@@ -101,6 +123,24 @@ layers:
     class_bit: protected_reserves
     geometry: polygon
 
+combine_groups:
+  protected_areas:
+    members: [natura2000, protected_nature]
+    rule: max
+
+parallel_corridor:
+  enabled: true
+  inner_distance_m: 50
+  outer_distance_m: 300
+  factor: 0.8
+  # Add OSM way IDs here when running validation that must not reuse those ways.
+  exclude_osm_ids: []
+  assets:
+    - file: phase_a_infrastructure.gpkg
+      layer: power_lines
+    - file: phase_a_infrastructure.gpkg
+      layer: pipelines
+
 class_bits:
   open_land: 1
   open_sea: 2
@@ -116,7 +156,17 @@ class_bits:
   protected_reserves: 2048
   population: 4096
   building_barrier: 8192
+  road_major: 16384
+  road_minor: 32768
+  forest: 65536
+  dwelling_proximity: 131072
+  parallel_corridor: 262144
 
 route_classes:
   natura2000: [natura2000_habitats, natura2000_birds]
   protected_nature: [protected_nature_s3, protected_reserves]
+  road_major: [road_major]
+  road_minor: [road_minor]
+  forest: [forest]
+  dwelling_proximity: [dwelling_proximity]
+  parallel_corridor: [parallel_corridor]

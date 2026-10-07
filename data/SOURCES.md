@@ -6,6 +6,7 @@ Acquisition date below is the date recorded by the download run. The raw files a
 |---|---|---|---|---|---|
 | Geofabrik Denmark extract boundary | OpenStreetMap contributors; Geofabrik | <https://download.geofabrik.de/europe/denmark.poly> | Open Database License (ODbL) 1.0; attribution required | EPSG:4326 | 2026-10-07 |
 | OpenStreetMap Denmark extract (GeoPackage export) | OpenStreetMap contributors; Geofabrik | <https://download.geofabrik.de/europe/denmark-latest-free.gpkg.zip> | Open Database License (ODbL) 1.0; attribution required | EPSG:4326 (source); EPSG:25832 (processed) | 2026-10-07 |
+| OpenStreetMap Denmark extract (PBF; power lines and gas pipelines) | OpenStreetMap contributors; Geofabrik | <https://download.geofabrik.de/europe/denmark-latest.osm.pbf> | Open Database License (ODbL) 1.0; attribution required | EPSG:4326 (source); EPSG:25832 (processed) | 2026-10-07 |
 | OpenStreetMap coastline-derived land polygons | OpenStreetMap contributors; osmdata.openstreetmap.de | <https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip> | ODbL 1.0; attribution required | EPSG:4326 (source); EPSG:25832 (processed) | 2026-10-07 |
 | Natura 2000 Habitats Directive sites, version end 2024 | European Environment Agency | <https://bio.discomap.eea.europa.eu/arcgis/rest/services/ProtectedSites/Natura2000Sites/MapServer/0/query> | EEA reuse terms; attribution required; see dataset metadata | EPSG:3035 (catalogue product); EPSG:25832 (query output) | 2026-10-07 |
 | Natura 2000 Birds Directive sites, version end 2024 | European Environment Agency | <https://bio.discomap.eea.europa.eu/arcgis/rest/services/ProtectedSites/Natura2000Sites/MapServer/1/query> | EEA reuse terms; attribution required; see dataset metadata | EPSG:3035 (catalogue product); EPSG:25832 (query output) | 2026-10-07 |
@@ -14,15 +15,11 @@ Acquisition date below is the date recorded by the download run. The raw files a
 | GHS-POP R2023A, epoch 2020, 100 m | European Commission Joint Research Centre | <https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_POP_GLOBE_R2023A/GHS_POP_E2020_GLOBE_R2023A_54009_100/V1-0/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0.zip> | European Commission reuse notice; source acknowledgment required | ESRI:54009 (source); EPSG:25832 (processed) | 2026-10-07 |
 | OpenStreetMap standard tiles (planned web basemap) | OpenStreetMap contributors | <https://tile.openstreetmap.org/{z}/{x}/{y}.png> | OSM tile policy; visible attribution, caching, no bulk download | EPSG:3857 | Not downloaded (runtime tiles) |
 
-The Geofabrik PBF extract was downloaded during initial format testing but is not used by the current preparation pipeline. OSM-derived processed layers are read from the GeoPackage export listed above.
+OSM roads and forest are extracted from Geofabrik's GeoPackage export. The phase-A power-line and gas-pipeline corridors are extracted from the PBF lines layer; power lines are limited to tagged `power=line` ways with voltage of at least 132 kV, and pipelines to `man_made=pipeline` ways tagged `substance=gas`.
 
 ## Hotspot coordinates and project metadata
 
-The 15 candidate points in `data/input/hotspots.csv` are routing anchors,
-not surveyed pipeline endpoints or proof of commercial storage permission.
-Coordinates are stored in WGS84 (EPSG:4326). Storage exploration-area points
-are representative centroids or platform proxies; the underlying DEA
-licensing polygons are not redistributed.
+The 15 candidate points in `data/input/hotspots.csv` are routing anchors, not surveyed pipeline endpoints or proof of commercial storage permission. Coordinates are stored in WGS84 (EPSG:4326). Storage exploration-area points are representative centroids or platform proxies; the underlying DEA licensing polygons are not redistributed.
 
 | Information | Publisher | Reference URL | Terms / caveat | CRS / date |
 |---|---|---|---|---|
@@ -35,10 +32,7 @@ licensing polygons are not redistributed.
 | Aalborg East terminal design capacity | Port of Aalborg | <https://portofaalborg.dk/en/new-co2-reception-facilities-will-make-aalborg-one-of-europes-leaders-in-carbon-management/> | Announced design capacity, not captured volume | Not spatial; researched 2026-10-07 |
 | Fjernvarme Fyn capture proposal | Fjernvarme Fyn | <https://www.fjernvarmefyn.dk/nyheder/fjernvarme-fyn-ansoeger-ikke-statens-ccs-pulje/> | Planned estimate; company did not apply to the state fund | Not spatial; researched 2026-10-07 |
 
-The extent uses the Geofabrik `denmark.poly` boundary as an approximation.
-Foreign OSM land inside the buffered analysis region is removed; a narrow
-strip may remain on the Danish side because the extract boundary is not a
-surveyed legal border. Foreign waters remain part of the sea routing area.
+The extent uses the Geofabrik `denmark.poly` boundary as an approximation. Foreign OSM land inside the buffered analysis region is removed; a narrow strip may remain on the Danish side because the extract boundary is not a surveyed legal border. Foreign waters remain part of the sea routing area.
 
 Additional source endpoints used by the downloader:
 

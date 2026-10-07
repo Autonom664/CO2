@@ -12,7 +12,9 @@ from shapely.geometry import Point, box
 from src.acquire_data import (
     exclude_foreign_land_from_extent,
     extend_extent_to_offshore_storage,
+    osm_tag_value,
     prepare_coast_and_extent,
+    voltage_in_volts,
 )
 
 
@@ -80,6 +82,24 @@ class OffshoreExtentTests(unittest.TestCase):
                 ).area
                 == 0
             )
+
+
+class OsmInfrastructureParsingTests(unittest.TestCase):
+    def test_reads_selected_hstore_tag(self) -> None:
+        self.assertEqual(
+            osm_tag_value(
+                '"power"=>"line","voltage"=>"400000","name"=>"A"',
+                "voltage",
+            ),
+            "400000",
+        )
+
+    def test_voltage_parser_filters_bad_low_voltage_tag(self) -> None:
+        self.assertEqual(voltage_in_volts("132000;400000"), 400000)
+        self.assertEqual(voltage_in_volts("132 kV"), 132000)
+        self.assertEqual(voltage_in_volts("400"), 400)
+        self.assertIsNone(voltage_in_volts("unknown"))
+        self.assertIsNone(voltage_in_volts(None))
 
 
 if __name__ == "__main__":

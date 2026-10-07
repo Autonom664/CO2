@@ -91,6 +91,11 @@ class RoutingTests(unittest.TestCase):
                 "protected_reserves": 2048,
                 "population": 4096,
                 "building_barrier": 8192,
+                "road_major": 16384,
+                "road_minor": 32768,
+                "forest": 65536,
+                "dwelling_proximity": 131072,
+                "parallel_corridor": 262144,
             },
             {
                 "natura2000": ["natura2000_habitats", "natura2000_birds"],
@@ -161,6 +166,11 @@ class RoutingTests(unittest.TestCase):
             "protected_reserves": 2048,
             "population": 4096,
             "building_barrier": 8192,
+            "road_major": 16384,
+            "road_minor": 32768,
+            "forest": 65536,
+            "dwelling_proximity": 131072,
+            "parallel_corridor": 262144,
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -185,10 +195,10 @@ class RoutingTests(unittest.TestCase):
             with rasterio.open(
                 processed / "cost_class_mask_100m.tif",
                 "w",
-                **(profile | {"dtype": "uint16", "nodata": 0}),
+                **(profile | {"dtype": "uint32", "nodata": 0}),
             ) as dataset:
                 dataset.write(
-                    np.full((30, 30), class_bits["open_land"], dtype=np.uint16),
+                    np.full((30, 30), class_bits["open_land"], dtype=np.uint32),
                     1,
                 )
                 dataset.update_tags(class_bits=json.dumps(class_bits))
@@ -257,6 +267,11 @@ class RoutingTests(unittest.TestCase):
                                 "protected_nature_s3",
                                 "protected_reserves",
                             ],
+                            "road_major": ["road_major"],
+                            "road_minor": ["road_minor"],
+                            "forest": ["forest"],
+                            "dwelling_proximity": ["dwelling_proximity"],
+                            "parallel_corridor": ["parallel_corridor"],
                         },
                     }
                 ),
@@ -274,6 +289,9 @@ class RoutingTests(unittest.TestCase):
             self.assertTrue(all(pair["from_id"].startswith("H") for pair in pairs))
             routes = gpd.read_file(routes_path)
             self.assertEqual(len(routes), 56)
+            self.assertIn("km_dwelling_proximity", routes.columns)
+            with rasterio.open(processed / "cost_class_mask_100m.tif") as mask:
+                self.assertEqual(mask.dtypes[0], "uint32")
             self.assertEqual(set(routes["from_role"]), {"source"})
             self.assertEqual(set(routes["to_role"]), {"storage"})
             self.assertEqual(len(gpd.read_file(network_path)), 14)

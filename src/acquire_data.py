@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import shutil
 import urllib.parse
 import urllib.request
@@ -53,6 +54,7 @@ USER_AGENT = "co2-pipeline-routing/0.1 (open-data research project)"
 GEOFABRIK_GPKG = (
     "https://download.geofabrik.de/europe/denmark-latest-free.gpkg.zip"
 )
+GEOFABRIK_PBF = "https://download.geofabrik.de/europe/denmark-latest.osm.pbf"
 GEOFABRIK_POLY = "https://download.geofabrik.de/europe/denmark.poly"
 LAND_POLYGONS = (
     "https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip"
@@ -224,6 +226,10 @@ def download_sources(force: bool) -> dict[str, dict[str, Any]]:
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     files = {
+        "geofabrik_osm_denmark": (
+            GEOFABRIK_PBF,
+            RAW / "geofabrik" / "denmark-latest.osm.pbf",
+        ),
         "geofabrik_osm_gpkg": (
             GEOFABRIK_GPKG,
             RAW / "geofabrik" / "denmark-latest-free.gpkg.zip",
@@ -695,6 +701,162 @@ def prepare_osm(extent: gpd.GeoDataFrame) -> None:
         LOG.info("Prepared OSM %s: %s features", output_layer, feature_count)
 
 
+def osm_tag_value(tags: str | None, key: str) -> str | None:
+    if not isinstance(tags, str) or not tags:
+        return None
+    escaped_key = re.escape(key)
+    match = re.search(
+        rf'"{escaped_key}"=>"((?:\\.|[^"])*)"', tags
+    )
+    return match.group(1).replace(r"\"", '"') if match else None
+
+
+def voltage_in_volts(value: str | None) -> float | None:
+    if not value:
+        return None
+    voltages: list[float] = []
+    for token in re.split(r"[;,]", value):
+        match = re.fullmatch(
+            r"\s*(\d+(?:\.\d+)?)\s*(kv|v)?\s*",
+            token,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
+        amount = float(match.group(1))
+        unit = (match.group(2) or "v").lower()
+        voltages.append(amount * (1000 if unit == "kv" else 1))
+    return max(voltages) if voltages else None
+
+
+def prepare_phase_a_layers(
+    extent: gpd.GeoDataFrame,
+    requested_layers: set[str],
+) -> Path:
+    valid_layers = {"forest", "power_lines", "pipelines"}
+    unknown_layers = requested_layers - valid_layers
+    if unknown_layers:
+        raise ValueError(f"Unknown phase-A layers: {sorted(unknown_layers)}")
+    if not requested_layers:
+        raise ValueError("At least one phase-A layer must be requested")
+
+    output_path = PROCESSED / "phase_a_infrastructure.gpkg"
+    output_path.unlink(missing_ok=True)
+    mask = extent.geometry.iloc[0]
+    bbox = tuple(
+        float(value)
+        for value in gpd.GeoSeries([mask], crs=TARGET_CRS)
+        .to_crs("EPSG:4326")
+        .total_bounds
+    )
+    geofabrik = geofabrik_gpkg_path()
+
+    road_classes = {
+        "roads_major": (
+            "motorway", "motorway_link", "trunk", "trunk_link",
+            "primary", "primary_link",
+        ),
+        "roads_minor": (
+            "secondary", "secondary_link", "tertiary", "tertiary_link",
+        ),
+    }
+    for output_layer, classes in road_classes.items():
+        where = "fclass IN (" + ", ".join(
+            f"'{value}'" for value in classes
+        ) + ")"
+        count = 0
+        for source in read_geofabrik_layer_batches(
+            geofabrik, "gis_osm_roads_free", where, bbox
+        ):
+            clipped = clip_vector(source, mask)
+            if not clipped.empty:
+                write_gpkg_layer(output_path, output_layer, clipped)
+                count += len(clipped)
+            del source, clipped
+            gc.collect()
+        if count == 0:
+            raise ValueError(f"Prepared OSM layer {output_layer!r} is empty")
+        LOG.info("Prepared OSM %s: %s features", output_layer, count)
+
+    if "forest" in requested_layers:
+        count = 0
+        for source in read_geofabrik_layer_batches(
+            geofabrik,
+            "gis_osm_landuse_a_free",
+            "fclass = 'forest'",
+            bbox,
+        ):
+            clipped = clip_vector(source, mask)
+            if not clipped.empty:
+                write_gpkg_layer(output_path, "forest", clipped)
+                count += len(clipped)
+            del source, clipped
+            gc.collect()
+        if count == 0:
+            raise ValueError("Prepared OSM forest layer is empty")
+        LOG.info("Prepared OSM forest: %s features", count)
+
+    pbf_path = RAW / "geofabrik" / "denmark-latest.osm.pbf"
+    if {"power_lines", "pipelines"} & requested_layers:
+        if not pbf_path.exists():
+            raise FileNotFoundError(
+                f"Required OSM PBF for phase-A infrastructure is missing: "
+                f"{pbf_path}"
+            )
+        for layer_name, where in (
+            (
+                "power_lines",
+                """other_tags LIKE '%"power"=>"line"%'""",
+            ),
+            ("pipelines", "man_made = 'pipeline'"),
+        ):
+            if layer_name not in requested_layers:
+                continue
+            frame = pyogrio.read_dataframe(
+                pbf_path,
+                layer="lines",
+                columns=["osm_id", "other_tags"],
+                where=where,
+                bbox=bbox,
+                use_arrow=True,
+            )
+            if frame.crs is None:
+                raise ValueError(f"OSM PBF lines layer has no CRS: {pbf_path}")
+            if layer_name == "power_lines":
+                voltages = frame["other_tags"].map(
+                    lambda tags: voltage_in_volts(
+                        osm_tag_value(tags, "voltage")
+                    )
+                )
+                frame = frame.loc[
+                    voltages.map(
+                        lambda voltage: voltage is not None
+                        and voltage >= 132_000
+                    )
+                ].copy()
+            else:
+                substances = frame["other_tags"].map(
+                    lambda tags: osm_tag_value(tags, "substance") or ""
+                )
+                frame = frame.loc[
+                    substances.map(
+                        lambda value: "gas" in {
+                            part.strip().lower()
+                            for part in re.split(r"[;,]", value)
+                        }
+                    )
+                ].copy()
+            clipped = clip_vector(frame, mask)
+            if clipped.empty:
+                raise ValueError(
+                    f"Prepared OSM {layer_name!r} layer is empty"
+                )
+            write_gpkg_layer(output_path, layer_name, clipped)
+            LOG.info("Prepared OSM %s: %s features", layer_name, len(clipped))
+
+    return output_path
+
+
 def read_zip_shapefile(zip_path: Path, extract_dir: Path) -> gpd.GeoDataFrame:
     shapefiles = list(extract_dir.rglob("*.shp"))
     if not shapefiles:
@@ -851,6 +1013,14 @@ def write_source_register(manifest: dict[str, dict[str, Any]]) -> None:
             "geofabrik_osm_gpkg",
         ),
         (
+            "OpenStreetMap Denmark extract (PBF; power lines and gas pipelines)",
+            "OpenStreetMap contributors; Geofabrik",
+            GEOFABRIK_PBF,
+            "Open Database License (ODbL) 1.0; attribution required",
+            "EPSG:4326 (source); EPSG:25832 (processed)",
+            "geofabrik_osm_denmark",
+        ),
+        (
             "OpenStreetMap coastline-derived land polygons",
             "OpenStreetMap contributors; osmdata.openstreetmap.de",
             LAND_POLYGONS,
@@ -927,16 +1097,42 @@ def write_source_register(manifest: dict[str, dict[str, Any]]) -> None:
         "OSM tile policy; visible attribution, caching, no bulk download | "
         "EPSG:3857 | Not downloaded (runtime tiles) |"
     )
-    if "geofabrik_osm_denmark" in manifest:
-        content.extend(
-            [
-                "",
-                "The Geofabrik PBF extract was downloaded during initial format "
-                "testing but is not used by the current preparation pipeline. "
-                "OSM-derived processed layers are read from the GeoPackage "
-                "export listed above.",
-            ]
-        )
+    content.extend(
+        [
+            "",
+            "OSM roads and forest are extracted from Geofabrik's GeoPackage "
+            "export. The phase-A power-line and gas-pipeline corridors are "
+            "extracted from the PBF lines layer; power lines are limited to "
+            "tagged `power=line` ways with voltage of at least 132 kV, and "
+            "pipelines to `man_made=pipeline` ways tagged `substance=gas`.",
+            "",
+            "## Hotspot coordinates and project metadata",
+            "",
+            "The 15 candidate points in `data/input/hotspots.csv` are routing "
+            "anchors, not surveyed pipeline endpoints or proof of commercial "
+            "storage permission. Coordinates are stored in WGS84 (EPSG:4326). "
+            "Storage exploration-area points are representative centroids or "
+            "platform proxies; the underlying DEA licensing polygons are not "
+            "redistributed.",
+            "",
+            "| Information | Publisher | Reference URL | Terms / caveat | CRS / date |",
+            "|---|---|---|---|---|",
+            "| Gassum, Havnsø, Rødby, Stenlille and Thorning storage-area coordinates and statuses | Danish Energy Agency | <https://energidata.maps.arcgis.com/apps/instant/basic/index.html?appid=2bd1bfe3bf644cf4adbe683d2f3cad09> | Map item does not state licence terms; this project uses cited representative points only, not the polygons | DEA area centroids EPSG:25832 transformed to EPSG:4326; researched 2026-10-07 |",
+            "| Nini A and Harald platform coordinate proxies | FOGA | <https://www.foga.dk/en/foga-info-north-sea/totalenergies/haraldtrym/> | Approximate platform proxies; not surveyed injection points | WGS84 coordinates; researched 2026-10-07 |",
+            "| EU ETS verified 2024 emissions | European Commission, DG CLIMA / Union Registry | <https://climate.ec.europa.eu/areas-action/carbon-markets/eu-emissions-trading-system-eu-ets/union-registry_en> | Fossil t CO2e; excludes biogenic CO2. Registry source terms apply; no source file redistributed | Not spatial; 2024 values from the 2026-04-01 extract cited in research notes |",
+            "| Aalborg Portland capture contract | Danish Energy Agency | <https://ens.dk/forsyning-og-forbrug/ccs-udbud-og-anden-stoette-til-udvikling-af-ccs> | Planned capture, not operational volume | Not spatial; researched 2026-10-07 |",
+            "| Ørsted Asnæs/Avedøre combined capture contract | Danish Energy Agency | <https://ens.dk/en/press/first-tender-ccus-subsidy-scheme-has-been-finalized-danish-energy-agency-awards-contract> | 430 kt/yr is combined; individual split is not verified; described as biogenic | Not spatial; researched 2026-10-07 |",
+            "| Greenport Hirtshals capacity targets | Greenport Scandinavia | <https://greenportscandinavia.com/about/> | Targets, not captured volumes | Not spatial; researched 2026-10-07 |",
+            "| Aalborg East terminal design capacity | Port of Aalborg | <https://portofaalborg.dk/en/new-co2-reception-facilities-will-make-aalborg-one-of-europes-leaders-in-carbon-management/> | Announced design capacity, not captured volume | Not spatial; researched 2026-10-07 |",
+            "| Fjernvarme Fyn capture proposal | Fjernvarme Fyn | <https://www.fjernvarmefyn.dk/nyheder/fjernvarme-fyn-ansoeger-ikke-statens-ccs-pulje/> | Planned estimate; company did not apply to the state fund | Not spatial; researched 2026-10-07 |",
+            "",
+            "The extent uses the Geofabrik `denmark.poly` boundary as an "
+            "approximation. Foreign OSM land inside the buffered analysis "
+            "region is removed; a narrow strip may remain on the Danish side "
+            "because the extract boundary is not a surveyed legal border. "
+            "Foreign waters remain part of the sea routing area.",
+        ]
+    )
     content.extend(
         [
             "",
@@ -967,9 +1163,25 @@ def write_source_register(manifest: dict[str, dict[str, Any]]) -> None:
 def prepare_data(
     manifest: dict[str, dict[str, Any]],
     config_path: Path = CONFIG_FILE,
+    layers: set[str] | None = None,
 ) -> None:
+    if layers is not None:
+        extent_path = PROCESSED / "coast_land_water.gpkg"
+        if not extent_path.exists():
+            raise FileNotFoundError(
+                "Phase-A layer extraction requires completed base preparation: "
+                f"{extent_path}"
+            )
+        extent = gpd.read_file(
+            extent_path, layer="analysis_extent"
+        ).to_crs(TARGET_CRS)
+        prepare_phase_a_layers(extent, layers)
+        LOG.info("Selective phase-A layer preparation completed")
+        return
+
     required = [
         RAW / "geofabrik" / "denmark.poly",
+        RAW / "geofabrik" / "denmark-latest.osm.pbf",
         RAW / "geofabrik" / "denmark-latest-free.gpkg.zip",
         RAW / "osm-land" / "land-polygons-split-4326.zip",
         RAW / "miljoeportal" / "protected-nature.zip",
@@ -1036,7 +1248,20 @@ def main() -> None:
         default=CONFIG_FILE,
         help="YAML configuration containing the offshore corridor width.",
     )
+    parser.add_argument(
+        "--layers",
+        type=lambda value: {
+            layer.strip() for layer in value.split(",") if layer.strip()
+        },
+        metavar="LIST",
+        help=(
+            "Prepare only these phase-A layers (forest,power_lines,pipelines), "
+            "plus major/minor roads. Requires --prepare-only."
+        ),
+    )
     args = parser.parse_args()
+    if args.layers and not args.prepare_only:
+        parser.error("--layers requires --prepare-only")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
@@ -1047,7 +1272,7 @@ def main() -> None:
     else:
         manifest = download_sources(force=args.force)
     if not args.download_only:
-        prepare_data(manifest, args.config)
+        prepare_data(manifest, args.config, args.layers)
 
 
 if __name__ == "__main__":

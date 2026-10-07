@@ -30,11 +30,16 @@ CLASS_PROPERTIES = {
     "open_land": "km_open_land",
     "open_sea": "km_open_sea",
     "road_crossing": "km_road_crossing",
+    "road_major": "km_road_major",
+    "road_minor": "km_road_minor",
     "railway_crossing": "km_railway_crossing",
     "watercourse_crossing": "km_watercourse_crossing",
     "urban_area": "km_urban_area",
     "lake": "km_lake",
     "wetland": "km_wetland",
+    "forest": "km_forest",
+    "dwelling_proximity": "km_dwelling_proximity",
+    "parallel_corridor": "km_parallel_corridor",
     "natura2000": "km_natura2000",
     "protected_nature": "km_protected_nature",
     "population": "km_population",
@@ -289,7 +294,18 @@ def build_route_feature(
         segment_length_m = resolution * math.hypot(row_b - row_a, col_b - col_a)
         bits = int(class_mask[row_b, col_b])
         for class_name, property_name in CLASS_PROPERTIES.items():
-            bit_names = route_classes.get(class_name, [class_name])
+            if class_name in route_classes:
+                bit_names = route_classes[class_name]
+                missing_bits = set(bit_names) - class_bits.keys()
+                if missing_bits:
+                    raise ValueError(
+                        f"Route class {class_name!r} references undefined "
+                        f"class bits: {sorted(missing_bits)}"
+                    )
+            else:
+                bit_names = (
+                    [class_name] if class_name in class_bits else []
+                )
             if any(bits & int(class_bits[bit_name]) for bit_name in bit_names):
                 class_km[class_name] += segment_length_m / 1000
     properties: dict[str, Any] = {
@@ -434,7 +450,6 @@ def route_hotspots(
             raise ValueError("Routing requires square grid cells")
         if not math.isclose(resolution_x, resolution):
             raise ValueError("Cost raster resolution does not match the config")
-        class_mask = np.zeros(cost.shape, dtype=np.uint16)
         with rasterio.open(class_path) as class_source:
             if (
                 class_source.shape != source.shape
@@ -452,6 +467,15 @@ def route_hotspots(
                     "rebuild the cost surface before routing."
                 )
             class_mask = class_source.read(1)
+            maximum_bit = max(configured_bits.values(), default=0)
+            if (
+                not np.issubdtype(class_mask.dtype, np.unsignedinteger)
+                or maximum_bit > np.iinfo(class_mask.dtype).max
+            ):
+                raise ValueError(
+                    "Cost-class raster dtype cannot represent configured bits; "
+                    "rebuild the cost surface before routing."
+                )
     hotspots = load_hotspots(
         hotspots_path,
         Transformer.from_crs("EPSG:4326", crs, always_xy=True),
