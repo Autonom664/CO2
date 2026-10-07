@@ -155,6 +155,46 @@ farther away. Deliverable routes are written as
 `routes.geojson`, `minimum_spanning_network.geojson`, and
 `pairwise_route_costs.csv`.
 
+## Corridors and validation
+
+**Near-optimal corridors.** A single least-cost line overstates how
+precisely the model can place a pipeline. `src/corridors.py` marks every
+cell through which a route would cost at most 1% (inner band) or 3% (outer
+band) more than the optimum. With `MCP_Geometric`, the cost of the best path
+through a cell is the sum of the accumulated-cost surfaces from the two
+endpoints, so this needs one cost-distance run per hotspot.
+- **Reading it:** a narrow band means the route is well determined; a wide
+  band means several alignments are about equally good.
+- **Why the bands are tight:** over evenly costed land the band is roughly
+  an ellipse. Its half-width is about √(t·(2+t))/2 of the route length,
+  where t is the tolerance. At 5% that is about 16% of the length (around
+  48 km on a 300 km route), too wide to be informative.
+- **Display simplifications:** holes smaller than 2 km² (villages, farms,
+  small lakes) are removed and outlines are simplified to 150 m.
+
+**Output checks.** `python -m validation.check_outputs` confirms:
+- the expected source → storage route set
+- a spanning network with n − 1 edges and no cycles
+- no route shorter than the straight line between its ends
+- no route vertex on a barrier or NoData cell
+- no cost on foreign land
+- outputs newer than their inputs
+
+**Baltic Pipe comparison.** `python -m validation.baltic_pipe` routes
+between the two onshore ends of the as-built Baltic Pipe and reports:
+- the offset from the real alignment
+- the length ratio
+- the share of the real pipeline inside each corridor band
+
+The real pipeline's OSM ways must be listed in
+`parallel_corridor.exclude_osm_ids` for this run; otherwise the
+infrastructure discount already "knows" the answer. See
+`validation/README.md`.
+
+**Browser test.** `validation/ui_smoke.py` (Playwright) checks the
+published map: the route list, selection and shareable links, corridors,
+popups, layer toggles, GPU texture limits and console errors.
+
 ## Interactive map and deployment
 
 `src/build_web.py` produces a static MapLibre application in `web/`. The

@@ -175,7 +175,11 @@ function addGeoJsonLayer(map, layer, data) {
       type: "fill",
       source: "corridors",
       filter: noFeature,
-      paint: { "fill-color": "#ffd23f", "fill-opacity": 0.22 },
+      // Nested bands: the narrowest (most robust) band is drawn darkest.
+      paint: {
+        "fill-color": "#ffd23f",
+        "fill-opacity": ["case", ["<=", ["get", "tolerance"], 0.011], 0.38, 0.16],
+      },
     }, beforeId);
     map.addLayer({
       id: "corridors-line",
@@ -328,6 +332,10 @@ function selectRoute(map, feature, { zoom = true, popup = true } = {}) {
     ["==", ["get", "to_id"], properties.to_id],
   ];
   map.setFilter("route-highlight", pairFilter);
+  // Keep the highlight above the network line it may coincide with, and
+  // the hotspots above both.
+  map.moveLayer("route-highlight");
+  if (map.getLayer("hotspots")) map.moveLayer("hotspots");
   for (const id of routeLayerIds.corridors) {
     if (map.getLayer(id)) map.setFilter(id, pairFilter);
   }

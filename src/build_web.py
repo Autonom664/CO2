@@ -432,7 +432,7 @@ def build_web(
             route_layers.append(
                 {
                     "id": "corridors",
-                    "label": "Corridor of selected route (≤5% extra cost)",
+                    "label": "Corridor of selected route (≤1% darker, ≤3% lighter extra cost)",
                     "kind": "geojson",
                     "url": "data/corridors.geojson",
                 }

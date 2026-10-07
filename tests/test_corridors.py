@@ -46,5 +46,15 @@ class CorridorTests(unittest.TestCase):
         self.assertTrue(mask[self.start] and mask[self.end])
 
 
+    def test_small_holes_are_dropped_large_ones_kept(self) -> None:
+        outer = [(0, 0), (10_000, 0), (10_000, 10_000), (0, 10_000)]
+        small = [(1_000, 1_000), (1_500, 1_000), (1_500, 1_500), (1_000, 1_500)]
+        large = [(4_000, 4_000), (8_000, 4_000), (8_000, 8_000), (4_000, 8_000)]
+        from shapely.geometry import Polygon
+        cleaned = corridors.drop_small_holes(Polygon(outer, [small, large]), 1_000_000)
+        self.assertEqual(len(cleaned.interiors), 1)
+        self.assertAlmostEqual(cleaned.area, 100_000_000 - 16_000_000)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,7 +21,7 @@ import rasterio
 from pyproj import Transformer
 from rasterio.features import shapes
 from rasterio.windows import Window
-from shapely.geometry import shape
+from shapely.geometry import MultiPolygon, Polygon, shape
 from shapely.ops import unary_union
 from skimage.graph import MCP_Geometric
 
@@ -45,6 +45,7 @@ def corridor_polygon(
     tolerance: float,
     transform: rasterio.Affine,
     simplify_m: float,
+    min_hole_m2: float = 0,
 ) -> tuple[Any, int]:
     mask = through_cost <= optimum * (1 + tolerance)
     rows = np.flatnonzero(mask.any(axis=1))
@@ -63,21 +64,40 @@ def corridor_polygon(
         )
         if value
     ]
-    polygon = unary_union(parts)
+    polygon = drop_small_holes(unary_union(parts), min_hole_m2)
     if simplify_m > 0:
         polygon = polygon.simplify(simplify_m, preserve_topology=True)
     return polygon, int(np.count_nonzero(sub))
+
+
+def drop_small_holes(geometry: Any, min_area_m2: float) -> Any:
+    """Remove interior rings smaller than min_area_m2 (towns, lakes, farms).
+
+    They carry little meaning at corridor scale but dominate the file size.
+    """
+    if min_area_m2 <= 0:
+        return geometry
+    polygons = geometry.geoms if isinstance(geometry, MultiPolygon) else [geometry]
+    kept = [
+        Polygon(
+            polygon.exterior,
+            [ring for ring in polygon.interiors if Polygon(ring).area >= min_area_m2],
+        )
+        for polygon in polygons
+    ]
+    return kept[0] if len(kept) == 1 else MultiPolygon(kept)
 
 
 def compute_corridors(
     hotspots_path: Path = routing.HOTSPOTS_FILE,
     config_path: Path = routing.CONFIG_FILE,
     output: Path = OUTPUT,
-    tolerance: float = 0.05,
-    simplify_m: float = 100.0,
+    tolerances: tuple[float, ...] = (0.01, 0.03),
+    simplify_m: float = 150.0,
+    min_hole_km2: float = 2.0,
 ) -> Path:
-    if tolerance <= 0:
-        raise ValueError("Corridor tolerance must be positive")
+    if not tolerances or min(tolerances) <= 0:
+        raise ValueError("Corridor tolerances must be positive")
     config = routing.load_config(config_path)
     resolution = int(config["grid"]["resolution_m"])
     cost_path = routing.PROCESSED / f"cost_surface_{resolution}m.tif"
@@ -126,23 +146,26 @@ def compute_corridors(
                 LOG.warning("%s → %s is unreachable", start["name"], end["name"])
                 continue
             through = from_start + target_costs[end["id"]]
-            polygon, cells = corridor_polygon(
-                through, optimum, tolerance, transform, simplify_m
-            )
-            if polygon is None or polygon.is_empty:
-                continue
-            records.append(
-                {
-                    "from_id": start["id"],
-                    "from_name": start["name"],
-                    "to_id": end["id"],
-                    "to_name": end["name"],
-                    "tolerance": tolerance,
-                    "optimal_cost": round(optimum, 3),
-                    "area_km2": round(cells * cell_area_km2, 1),
-                }
-            )
-            geometries.append(polygon)
+            # Widest band first so narrower bands draw on top of it.
+            for tolerance in sorted(tolerances, reverse=True):
+                polygon, cells = corridor_polygon(
+                    through, optimum, tolerance, transform, simplify_m,
+                    min_hole_km2 * 1_000_000,
+                )
+                if polygon is None or polygon.is_empty:
+                    continue
+                records.append(
+                    {
+                        "from_id": start["id"],
+                        "from_name": start["name"],
+                        "to_id": end["id"],
+                        "to_name": end["name"],
+                        "tolerance": tolerance,
+                        "optimal_cost": round(optimum, 3),
+                        "area_km2": round(cells * cell_area_km2, 1),
+                    }
+                )
+                geometries.append(polygon)
         del from_start
     if not records:
         raise ValueError("No corridors could be computed")
@@ -151,7 +174,7 @@ def compute_corridors(
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)
-    frame.to_file(output, driver="GeoJSON", COORDINATE_PRECISION=5)
+    frame.to_file(output, driver="GeoJSON", COORDINATE_PRECISION=4)
     LOG.info("Wrote %d corridors to %s", len(frame), output)
     return output
 
@@ -160,15 +183,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compute near-optimal corridors for each delivery route."
     )
-    parser.add_argument("--tolerance", type=float, default=0.05)
-    parser.add_argument("--simplify-m", type=float, default=100.0)
+    parser.add_argument(
+        "--tolerances", default="0.01,0.03",
+        help="Comma-separated extra-cost bands, for example 0.01,0.03",
+    )
+    parser.add_argument("--min-hole-km2", type=float, default=2.0)
+    parser.add_argument("--simplify-m", type=float, default=150.0)
     parser.add_argument("--output", type=Path, default=OUTPUT)
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     compute_corridors(
-        output=args.output, tolerance=args.tolerance, simplify_m=args.simplify_m
+        output=args.output,
+        tolerances=tuple(float(v) for v in args.tolerances.split(",")),
+        simplify_m=args.simplify_m,
+        min_hole_km2=args.min_hole_km2,
     )
 
 

@@ -85,7 +85,7 @@ def endpoints(reference: LineString | MultiLineString) -> tuple[tuple, tuple]:
     return best
 
 
-def run(tolerance: float = 0.05) -> dict[str, Any]:
+def run(tolerances: tuple[float, ...] = (0.01, 0.03)) -> dict[str, Any]:
     config = routing.load_config(routing.CONFIG_FILE)
     resolution = int(config["grid"]["resolution_m"])
     max_snap_m = float(config.get("routing", {}).get("max_snap_distance_m", 2000))
@@ -112,10 +112,13 @@ def run(tolerance: float = 0.05) -> dict[str, Any]:
     report = compare_lines(model, reference)
     report["model_cost"] = round(optimum, 1)
     through = from_start + corridors.accumulated_cost(mcp_cost, cells[1])
-    corridor, _ = corridors.corridor_polygon(through, optimum, tolerance, transform, 0)
-    report[f"share_reference_inside_{int(tolerance * 100)}pct_corridor"] = round(
-        reference.intersection(corridor).length / reference.length, 3
-    )
+    for tolerance in tolerances:
+        corridor, _ = corridors.corridor_polygon(
+            through, optimum, tolerance, transform, 0
+        )
+        report[f"share_reference_inside_{tolerance:.0%}_corridor"] = round(
+            reference.intersection(corridor).length / reference.length, 3
+        )
     gpd.GeoDataFrame(
         [{"name": "Modelled least-cost route"}], geometry=[model], crs=crs
     ).to_crs("EPSG:4326").to_file(MODEL_ROUTE, driver="GeoJSON")
@@ -126,10 +129,10 @@ def run(tolerance: float = 0.05) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--tolerance", type=float, default=0.05)
+    parser.add_argument("--tolerances", default="0.01,0.03")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    print(json.dumps(run(args.tolerance), indent=2))
+    print(json.dumps(run(tuple(float(v) for v in args.tolerances.split(","))), indent=2))
 
 
 if __name__ == "__main__":
