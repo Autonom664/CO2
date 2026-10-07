@@ -1,4 +1,4 @@
-"""Build the configurable 250 m least-cost routing surface."""
+"""Build the configurable least-cost routing surface."""
 
 from __future__ import annotations
 
@@ -54,6 +54,9 @@ def validate_cost_scores(
     population = costs.get("population")
     if not isinstance(population, dict):
         raise ValueError("Population costs must define a minimum and maximum score")
+    min_per_cell = float(population.get("min_per_cell", 0))
+    if not math.isfinite(min_per_cell) or min_per_cell < 0:
+        raise ValueError("Population threshold must be a finite non-negative value")
     minimum = float(population["minimum"])
     maximum = float(population["maximum"])
     if (
@@ -113,6 +116,8 @@ def rasterize_layer(
             max_features=BATCH_SIZE,
             use_arrow=True,
         )
+        if frame.empty:
+            break
         if frame.crs is None:
             raise ValueError(f"Source layer has no CRS: {gpkg.name}:{layer}")
         if frame.crs.to_string() != target_crs:
@@ -122,16 +127,13 @@ def rasterize_layer(
             for geometry in frame.geometry.array
             if geometry is not None and not geometry.is_empty
         )
-        batch_mask = rasterize(
+        rasterize(
             shapes,
-            out_shape=(height, width),
+            out=mask,
             transform=transform,
-            fill=0,
             default_value=1,
             all_touched=all_touched,
-            dtype="uint8",
         )
-        np.maximum(mask, batch_mask, out=mask)
         offset += len(frame)
         LOG.info(
             "Rasterized %s:%s: %s/%s features",
@@ -140,7 +142,7 @@ def rasterize_layer(
             min(offset, info["features"]),
             info["features"],
         )
-        del frame, batch_mask
+        del frame
     return mask
 
 
@@ -180,6 +182,7 @@ def population_costs(
     width: int,
     height: int,
     target_crs: str,
+    resolution_m: int,
     settings: dict[str, Any],
 ) -> tuple[np.ndarray, dict[str, float | int]]:
     path = PROCESSED / "population_2020_100m.tif"
@@ -198,15 +201,24 @@ def population_costs(
             dst_nodata=np.nan,
             resampling=Resampling.average,
         )
+        source_resolution_x, source_resolution_y = source.res
+    if not math.isclose(source_resolution_x, source_resolution_y):
+        raise ValueError("Population raster requires square source cells")
+    area_scale = (resolution_m / source_resolution_x) ** 2
+    population *= area_scale
+    threshold = float(settings.get("min_per_cell", 0)) * area_scale
     eligible = (
         land_mask
         & extent_mask
         & np.isfinite(population)
         & (population > 0)
+        & (population >= threshold)
     )
     values = population[eligible]
     if values.size == 0:
-        raise ValueError("No positive population cells overlap land in the grid")
+        raise ValueError(
+            "No population cells meet the configured threshold on land"
+        )
     minimum = float(settings["minimum"])
     maximum = float(settings["maximum"])
     quantile_count = int(settings["quantiles"])
@@ -230,6 +242,7 @@ def population_costs(
         "positive_population_cells": int(values.size),
         "minimum_population": float(values.min()),
         "maximum_population": float(values.max()),
+        "threshold_per_analysis_cell": float(threshold),
     }
 
 
@@ -390,6 +403,13 @@ def build_cost_surface(
             target_crs,
         )
         mask = mask.astype(bool) & extent_mask & ~building_mask
+        surface = layer_config.get("surface", "any")
+        if surface == "land":
+            mask &= land_mask & ~building_mask
+        elif surface != "any":
+            raise ValueError(
+                f"Unsupported surface constraint for layer {name!r}: {surface}"
+            )
         cost_key = layer_config["cost"]
         if cost_key not in costs:
             raise ValueError(f"No configured cost for input class {cost_key!r}")
@@ -407,7 +427,9 @@ def build_cost_surface(
 
     for cost_key, mask in class_masks.items():
         score = float(costs[cost_key]) * cost_scale
-        cost_surface[mask & np.isfinite(cost_surface)] += score
+        cost_surface[
+            mask & np.isfinite(cost_surface) & (cost_surface != nodata)
+        ] += score
         record_class(cost_key, mask, score)
         del mask
 
@@ -420,6 +442,7 @@ def build_cost_surface(
             width,
             height,
             target_crs,
+            resolution,
             population_config,
         )
         population *= cost_scale
@@ -475,7 +498,10 @@ def build_cost_surface(
             cost_scale_factor=cost_scale,
             combine_rule="additive",
             barrier_value=nodata,
-            population_method="100 m population averaged to grid; positive land values quantile-scaled",
+            population_method=(
+                "Population averaged to grid and scaled to analysis-cell area; "
+                "cells below the configured per-100-m-cell threshold are uncosted"
+            ),
             extent_bounds_m=",".join(f"{value:.2f}" for value in bounds),
             source_config=str(config_path.relative_to(ROOT)),
         )

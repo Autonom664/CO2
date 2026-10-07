@@ -11,10 +11,13 @@ import rasterio
 import yaml
 from pyproj import Transformer
 from rasterio.transform import from_origin
+from skimage.graph import MCP_Geometric
 
 from src.routing import (
     build_route_feature,
+    make_mcp_cost_array,
     make_route_pairs,
+    make_unordered_pairs,
     minimum_spanning_tree,
     nearest_valid_cell,
     route_hotspots,
@@ -22,15 +25,38 @@ from src.routing import (
 
 
 class RoutingTests(unittest.TestCase):
+    def test_mcp_cost_array_uses_infinite_barriers(self) -> None:
+        cost = np.ones((3, 5), dtype=np.float32)
+        valid = np.ones(cost.shape, dtype=bool)
+        cost[:, 2] = 0
+        valid[:, 2] = False
+        cost[0, 1] = np.nan
+
+        mcp_cost = make_mcp_cost_array(cost, valid)
+
+        self.assertEqual(mcp_cost.dtype, np.float64)
+        self.assertFalse(np.ma.isMaskedArray(mcp_cost))
+        self.assertTrue(np.all(np.isinf(mcp_cost[:, 2])))
+        self.assertTrue(np.isinf(mcp_cost[0, 1]))
+        cumulative, _ = MCP_Geometric(
+            mcp_cost, fully_connected=True
+        ).find_costs([(1, 0)])
+        self.assertFalse(np.isfinite(cumulative[1, 4]))
+
     def test_nearest_traversable_cell_obeys_snap_limit(self) -> None:
         valid = np.zeros((5, 5), dtype=bool)
         valid[2, 3] = True
+        transform = from_origin(0, 500, 100, 100)
         self.assertEqual(
-            nearest_valid_cell(valid, 2, 2, 100, 150, "h1"),
-            (2, 3, 100.0),
+            nearest_valid_cell(
+                valid, 2, 2, 220, 250, transform, 100, 150, "h1"
+            ),
+            (2, 3, 130.0),
         )
         with self.assertRaisesRegex(ValueError, "maximum allowed"):
-            nearest_valid_cell(valid, 2, 2, 100, 50, "h1")
+            nearest_valid_cell(
+                valid, 2, 2, 220, 250, transform, 100, 50, "h1"
+            )
 
     def test_route_includes_diagonal_distance_and_class_lengths(self) -> None:
         classes = np.array(
@@ -91,9 +117,10 @@ class RoutingTests(unittest.TestCase):
 
     def test_untyped_hotspots_keep_all_pairs_behavior(self) -> None:
         hotspots = [
-            {"id": f"H{index}", "role": "node"} for index in range(12)
+            {"id": f"H{index}", "role": "node"} for index in range(15)
         ]
-        self.assertEqual(len(make_route_pairs(hotspots)), 66)
+        self.assertEqual(len(make_route_pairs(hotspots)), 105)
+        self.assertEqual(len(make_unordered_pairs(hotspots)), 105)
 
     def test_route_hotspots_writes_source_storage_pairs_and_tree(self) -> None:
         class_bits = {
@@ -159,9 +186,14 @@ class RoutingTests(unittest.TestCase):
                         "project_status",
                         "location_basis",
                         "source_url",
+                        "ets_installation_id",
+                        "ets_verified_2024_t",
+                        "planned_capture_tpa",
+                        "capture_basis",
+                        "capture_source_url",
                     ]
                 )
-                for index in range(12):
+                for index in range(15):
                     row = 2 + (index // 4) * 8
                     col = 2 + (index % 4) * 6
                     x, y = rasterio.transform.xy(
@@ -179,6 +211,11 @@ class RoutingTests(unittest.TestCase):
                             "test",
                             "test point",
                             "https://example.com",
+                            "342" if index == 0 else "",
+                            "12345" if index == 0 else "",
+                            "1000" if index == 0 else "",
+                            "Test capture source" if index == 0 else "",
+                            "https://example.com/capture" if index == 0 else "",
                         ]
                     )
             config_path = root / "costs.yaml"
@@ -186,7 +223,7 @@ class RoutingTests(unittest.TestCase):
                 yaml.safe_dump(
                     {
                         "grid": {"resolution_m": 100},
-                        "routing": {"max_snap_distance_m": 0},
+                        "routing": {"max_snap_distance_m": 1},
                         "class_bits": class_bits,
                         "route_classes": {
                             "natura2000": [
@@ -210,13 +247,17 @@ class RoutingTests(unittest.TestCase):
                 )
             with pairwise_path.open(encoding="utf-8", newline="") as stream:
                 pairs = list(csv.DictReader(stream))
-            self.assertEqual(len(pairs), 32)
+            self.assertEqual(len(pairs), 105)
             self.assertTrue(all(pair["from_id"].startswith("H") for pair in pairs))
             routes = gpd.read_file(routes_path)
-            self.assertEqual(len(routes), 32)
+            self.assertEqual(len(routes), 56)
             self.assertEqual(set(routes["from_role"]), {"source"})
             self.assertEqual(set(routes["to_role"]), {"storage"})
-            self.assertEqual(len(gpd.read_file(network_path)), 11)
+            self.assertEqual(len(gpd.read_file(network_path)), 14)
+            hotspots = gpd.read_file(processed / "hotspots.geojson").set_index("id")
+            self.assertEqual(hotspots.loc["H1", "ets_installation_id"], "342")
+            self.assertEqual(hotspots.loc["H1", "ets_verified_2024_t"], 12345)
+            self.assertEqual(hotspots.loc["H1", "planned_capture_tpa"], 1000)
 
 
 if __name__ == "__main__":

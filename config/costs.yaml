@@ -13,6 +13,7 @@ routing:
 
 web:
   display_resolution_m: 100
+  route_simplify_m: 25
 
 barriers:
   - building_barrier
@@ -31,6 +32,7 @@ costs:
   wetland: 7
   population:
     enabled: true
+    min_per_cell: 1.0  # people per 100 m source cell; scales with analysis-cell area
     minimum: 1
     maximum: 10
     quantiles: 100
@@ -56,6 +58,7 @@ layers:
     layer: watercourses
     cost: watercourse_crossing
     geometry: linear
+    surface: land
   urban_areas:
     file: water_and_urban.gpkg
     layer: urban_areas
@@ -66,11 +69,13 @@ layers:
     layer: lakes
     cost: lake
     geometry: polygon
+    surface: land
   wetlands:
     file: water_and_urban.gpkg
     layer: wetlands
     cost: wetland
     geometry: polygon
+    surface: land
   natura2000_habitats:
     file: natura2000.gpkg
     layer: habitats

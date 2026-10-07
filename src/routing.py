@@ -24,7 +24,7 @@ PROCESSED = ROOT / "data" / "processed"
 HOTSPOTS_FILE = ROOT / "data" / "input" / "hotspots.csv"
 CONFIG_FILE = ROOT / "config" / "costs.yaml"
 LOG = logging.getLogger("routing")
-EXPECTED_HOTSPOTS = 12
+EXPECTED_HOTSPOTS = 15
 
 CLASS_PROPERTIES = {
     "open_land": "km_open_land",
@@ -49,6 +49,24 @@ def load_config(path: Path) -> dict[str, Any]:
     return config
 
 
+def parse_optional_number(
+    value: str | None, field: str, identifier: str
+) -> float | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        number = float(value)
+    except ValueError as error:
+        raise ValueError(
+            f"Invalid numeric value for {field} on hotspot {identifier!r}"
+        ) from error
+    if not math.isfinite(number) or number < 0:
+        raise ValueError(
+            f"Invalid numeric value for {field} on hotspot {identifier!r}"
+        )
+    return number
+
+
 def load_hotspots(
     path: Path,
     transformer: Transformer,
@@ -62,7 +80,7 @@ def load_hotspots(
     if not path.exists():
         raise FileNotFoundError(
             f"Hotspot input is required for routing: {path}. "
-            "Provide 12 rows with id,name,lon,lat columns; the coordinates "
+            "Provide 15 rows with id,name,lon,lat columns; the coordinates "
             "must be documented candidate locations."
         )
     with path.open(encoding="utf-8-sig", newline="") as stream:
@@ -105,7 +123,15 @@ def load_hotspots(
                 f"Hotspot {identifier!r} is outside the cost-surface extent"
             )
         nearest = nearest_valid_cell(
-            valid_cells, row, col, resolution, max_snap_m, identifier
+            valid_cells,
+            row,
+            col,
+            x,
+            y,
+            transform,
+            resolution,
+            max_snap_m,
+            identifier,
         )
         snapped_row, snapped_col, snap_distance = nearest
         hotspots.append(
@@ -119,6 +145,23 @@ def load_hotspots(
                 "source_url": (record.get("source_url") or "").strip(),
                 "project_source_url": (
                     record.get("project_source_url") or ""
+                ).strip(),
+                "ets_installation_id": (
+                    record.get("ets_installation_id") or ""
+                ).strip(),
+                "ets_verified_2024_t": parse_optional_number(
+                    record.get("ets_verified_2024_t"),
+                    "ets_verified_2024_t",
+                    identifier,
+                ),
+                "planned_capture_tpa": parse_optional_number(
+                    record.get("planned_capture_tpa"),
+                    "planned_capture_tpa",
+                    identifier,
+                ),
+                "capture_basis": (record.get("capture_basis") or "").strip(),
+                "capture_source_url": (
+                    record.get("capture_source_url") or ""
                 ).strip(),
                 "lon": lon,
                 "lat": lat,
@@ -164,10 +207,23 @@ def make_route_pairs(
     return [(source, sink) for source in sources for sink in storage]
 
 
+def make_unordered_pairs(
+    hotspots: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    return [
+        (start, end)
+        for index, start in enumerate(hotspots[:-1])
+        for end in hotspots[index + 1 :]
+    ]
+
+
 def nearest_valid_cell(
     valid_cells: np.ndarray,
     row: int,
     col: int,
+    x: float,
+    y: float,
+    transform: rasterio.Affine,
     resolution: int,
     max_snap_m: float,
     identifier: str,
@@ -185,9 +241,14 @@ def nearest_valid_cell(
         )
     valid_rows += row_min
     valid_cols += col_min
-    distance_squared = (valid_rows - row) ** 2 + (valid_cols - col) ** 2
+    center_x, center_y = rasterio.transform.xy(
+        transform, valid_rows, valid_cols, offset="center"
+    )
+    distance_squared = (np.asarray(center_x) - x) ** 2 + (
+        np.asarray(center_y) - y
+    ) ** 2
     nearest_index = int(np.argmin(distance_squared))
-    distance = math.sqrt(float(distance_squared[nearest_index])) * resolution
+    distance = math.sqrt(float(distance_squared[nearest_index]))
     if distance > max_snap_m:
         raise ValueError(
             f"Nearest traversable cell for hotspot {identifier!r} is "
@@ -198,6 +259,10 @@ def nearest_valid_cell(
         int(valid_cols[nearest_index]),
         distance,
     )
+
+
+def make_mcp_cost_array(cost: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    return np.where(valid & np.isfinite(cost), cost, np.inf).astype(np.float64)
 
 
 def cell_center(
@@ -251,7 +316,11 @@ def build_route_feature(
             for class_name, property_name in CLASS_PROPERTIES.items()
         }
     )
-    return {"geometry": line, "properties": properties}
+    return {
+        "geometry": line,
+        "properties": properties,
+        "_accumulated_cost": float(accumulated_cost),
+    }
 
 
 def minimum_spanning_tree(
@@ -285,7 +354,10 @@ def minimum_spanning_tree(
     edges = sorted(
         routes,
         key=lambda route: (
-            route["properties"]["accumulated_cost"],
+            route.get(
+                "_accumulated_cost",
+                route["properties"]["accumulated_cost"],
+            ),
             route["properties"]["from_id"],
             route["properties"]["to_id"],
         ),
@@ -383,63 +455,89 @@ def route_hotspots(
         resolution,
         max_snap_m,
     )
-    route_pairs = make_route_pairs(hotspots)
-    pairs_by_source: dict[str, list[dict[str, Any]]] = {}
-    for start, end in route_pairs:
-        pairs_by_source.setdefault(start["id"], []).append(end)
+    delivery_pairs = make_route_pairs(hotspots)
+    network_pairs = make_unordered_pairs(hotspots)
+    delivery_pair_keys = {
+        (start["id"], end["id"]) for start, end in delivery_pairs
+    }
     class_bits = {name: int(value) for name, value in config["class_bits"].items()}
-    masked_cost = np.ma.MaskedArray(cost, mask=~valid)
+    mcp_cost = make_mcp_cost_array(cost, valid)
     routes: list[dict[str, Any]] = []
-    pair_count = len(route_pairs)
+    network_routes: list[dict[str, Any]] = []
+    route_by_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    pair_count = len(network_pairs)
     pair_processed = 0
-    starts = [point for point in hotspots if point["id"] in pairs_by_source]
-    for source_index, start in enumerate(starts):
+    hotspot_index = {point["id"]: index for index, point in enumerate(hotspots)}
+    for source_index, start in enumerate(hotspots):
+        destinations = [
+            point for point in hotspots if point["id"] != start["id"]
+        ]
         LOG.info(
             "Running cost distance from hotspot %s (%s/%s)",
             start["id"],
             source_index + 1,
-            len(starts),
+            len(hotspots),
         )
-        mcp = MCP_Geometric(masked_cost, fully_connected=True)
-        cumulative, _ = mcp.find_costs([(start["row"], start["col"])])
-        for end in pairs_by_source[start["id"]]:
-            pair_processed += 1
+        mcp = MCP_Geometric(mcp_cost, fully_connected=True)
+        cumulative, _ = mcp.find_costs(
+            [(start["row"], start["col"])],
+            ends=[(end["row"], end["col"]) for end in destinations],
+            find_all_ends=True,
+        )
+        for end in destinations:
+            start_index = hotspot_index[start["id"]]
+            end_index = hotspot_index[end["id"]]
             destination = (end["row"], end["col"])
             total_cost = float(cumulative[destination])
             if not math.isfinite(total_cost):
-                LOG.error(
-                    "No traversable route between %s and %s",
+                if start_index < end_index:
+                    pair_processed += 1
+                    LOG.error("No traversable route between %s and %s", start["id"], end["id"])
+                continue
+            path = mcp.traceback(destination)
+            if start_index < end_index:
+                pair_processed += 1
+                route = build_route_feature(
+                    start,
+                    end,
+                    path,
+                    total_cost,
+                    class_mask,
+                    transform,
+                    resolution,
+                    class_bits,
+                    config.get("route_classes", {}),
+                )
+                network_routes.append(route)
+                route_by_pair[(start["id"], end["id"])] = route
+                LOG.info(
+                    "Routed pair %s/%s: %s to %s",
+                    pair_processed,
+                    pair_count,
                     start["id"],
                     end["id"],
                 )
-                continue
-            path = mcp.traceback(destination)
-            route = build_route_feature(
-                start,
-                end,
-                path,
-                total_cost,
-                class_mask,
-                transform,
-                resolution,
-                class_bits,
-                config.get("route_classes", {}),
-            )
-            routes.append(route)
-            LOG.info(
-                "Routed pair %s/%s: %s to %s",
-                pair_processed,
-                pair_count,
-                start["id"],
-                end["id"],
-            )
+            if (start["id"], end["id"]) in delivery_pair_keys:
+                routes.append(
+                    build_route_feature(
+                        start,
+                        end,
+                        path,
+                        total_cost,
+                        class_mask,
+                        transform,
+                        resolution,
+                        class_bits,
+                        config.get("route_classes", {}),
+                    )
+                )
         del mcp, cumulative
 
-    if not routes:
+    if not network_routes:
         raise ValueError("No hotspot pairs could be routed")
     mst_error: ValueError | None = None
     try:
-        mst = minimum_spanning_tree(routes, len(hotspots))
+        mst = minimum_spanning_tree(network_routes, len(hotspots))
     except ValueError as error:
         mst = []
         mst_error = error
@@ -448,17 +546,13 @@ def route_hotspots(
     network_path = PROCESSED / "minimum_spanning_network.geojson"
     save_geojson(routes, routes_path, crs.to_string())
 
-    route_by_pair = {
-        (route["properties"]["from_id"], route["properties"]["to_id"]): route
-        for route in routes
-    }
     pairwise_path = PROCESSED / "pairwise_route_costs.csv"
     with pairwise_path.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(
             ["from_id", "from_name", "to_id", "to_name", "status", "length_km", "accumulated_cost"]
         )
-        for start, end in route_pairs:
+        for start, end in network_pairs:
             route = route_by_pair.get((start["id"], end["id"]))
             properties = route["properties"] if route else {}
             writer.writerow(
@@ -486,6 +580,11 @@ def route_hotspots(
                 "location_basis": point["location_basis"],
                 "source_url": point["source_url"],
                 "project_source_url": point["project_source_url"],
+                "ets_installation_id": point["ets_installation_id"],
+                "ets_verified_2024_t": point["ets_verified_2024_t"],
+                "planned_capture_tpa": point["planned_capture_tpa"],
+                "capture_basis": point["capture_basis"],
+                "capture_source_url": point["capture_source_url"],
                 "snap_m": round(point["snap_distance_m"], 1),
             }
             for point in hotspots
@@ -502,10 +601,15 @@ def route_hotspots(
             "routes and pairwise_route_costs.csv were saved for diagnosis."
         ) from mst_error
     save_geojson(mst, network_path, crs.to_string())
-    if len(routes) != pair_count:
+    if len(network_routes) != pair_count:
         raise ValueError(
-            f"Only {len(routes)} of {pair_count} hotspot pairs were routed. "
+            f"Only {len(network_routes)} of {pair_count} network pairs were routed. "
             "See pairwise_route_costs.csv for unreachable pairs."
+        )
+    if len(routes) != len(delivery_pairs):
+        raise ValueError(
+            f"Only {len(routes)} of {len(delivery_pairs)} delivery routes were "
+            "routed. See pairwise_route_costs.csv for unreachable pairs."
         )
     LOG.info(
         "Wrote %s pair routes, %s minimum-spanning edges",

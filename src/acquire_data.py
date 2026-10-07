@@ -36,6 +36,7 @@ from shapely.geometry import (
     Point,
     Polygon,
 )
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points
 
 
@@ -399,10 +400,26 @@ def extend_extent_to_offshore_storage(
     return extent_geometry
 
 
+def exclude_foreign_land_from_extent(
+    extent_geometry: BaseGeometry,
+    all_land_geometry: BaseGeometry,
+    boundary_geometry: BaseGeometry,
+) -> tuple[BaseGeometry, BaseGeometry]:
+    foreign_geometry = make_valid(
+        all_land_geometry.intersection(extent_geometry).difference(
+            boundary_geometry
+        )
+    )
+    extent_geometry = make_valid(extent_geometry.difference(foreign_geometry))
+    if extent_geometry.is_empty:
+        raise ValueError("Excluding foreign land removed the entire analysis extent")
+    return extent_geometry, foreign_geometry
+
+
 def boundary_and_land(
     hotspots_path: Path = HOTSPOTS_FILE,
     corridor_half_width_m: float = 10_000,
-) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
     boundary_file = RAW / "geofabrik" / "denmark.poly"
     land_zip = RAW / "osm-land" / "land-polygons-split-4326.zip"
     boundary_wgs84 = gpd.GeoDataFrame(
@@ -437,6 +454,36 @@ def boundary_and_land(
         hotspots_path,
         corridor_half_width_m,
     )
+    extent_bounds = (
+        gpd.GeoSeries([extent_geometry], crs=TARGET_CRS)
+        .to_crs("EPSG:4326")
+        .total_bounds
+    )
+    left, bottom, right, top = map(float, extent_bounds)
+    extent_bbox = (
+        left - 0.05,
+        bottom - 0.05,
+        right + 0.05,
+        top + 0.05,
+    )
+    all_land = gpd.read_file(shapefiles[0], bbox=extent_bbox)
+    if all_land.crs is None:
+        raise ValueError("OSM land polygons have no CRS metadata")
+    if all_land.empty:
+        raise ValueError("No OSM land polygons overlap the analysis extent")
+    all_land = all_land.to_crs(TARGET_CRS)
+    all_land.geometry = all_land.geometry.map(make_valid)
+    all_land_geometry = union_all(
+        [
+            geometry.intersection(extent_geometry)
+            for geometry in all_land.geometry.array
+            if geometry is not None and not geometry.is_empty
+        ]
+    )
+    boundary_geometry = boundary_wgs84.to_crs(TARGET_CRS).geometry.iloc[0]
+    extent_geometry, foreign_geometry = exclude_foreign_land_from_extent(
+        extent_geometry, all_land_geometry, boundary_geometry
+    )
     extent = gpd.GeoDataFrame(
         {
             "buffer_m": [LAND_BUFFER_M],
@@ -450,7 +497,12 @@ def boundary_and_land(
         geometry=[land_geometry],
         crs=TARGET_CRS,
     )
-    return extent, country_land
+    foreign_land = gpd.GeoDataFrame(
+        {"source": ["OSM land polygons outside Denmark"]},
+        geometry=[foreign_geometry],
+        crs=TARGET_CRS,
+    )
+    return extent, country_land, foreign_land
 
 
 def polygon_parts(geometry: Any) -> list[Polygon]:
@@ -464,10 +516,13 @@ def polygon_parts(geometry: Any) -> list[Polygon]:
 
 
 def prepare_coast_and_extent(
-    extent: gpd.GeoDataFrame, country_land: gpd.GeoDataFrame
+    extent: gpd.GeoDataFrame,
+    country_land: gpd.GeoDataFrame,
+    foreign_land: gpd.GeoDataFrame,
 ) -> None:
     mask = extent.geometry.iloc[0]
     land_geometry = country_land.geometry.iloc[0].intersection(mask)
+    foreign_geometry = foreign_land.geometry.iloc[0]
     sea_geometry = mask.difference(land_geometry)
     sea_parts = polygon_parts(make_valid(sea_geometry))
     if not sea_parts:
@@ -482,11 +537,17 @@ def prepare_coast_and_extent(
         geometry=sea_parts,
         crs=TARGET_CRS,
     )
+    foreign = gpd.GeoDataFrame(
+        {"class": ["foreign_land"]},
+        geometry=[foreign_geometry],
+        crs=TARGET_CRS,
+    )
     write_gpkg(
         PROCESSED / "coast_land_water.gpkg",
         {
             "analysis_extent": extent,
             "land": land,
+            "foreign_land": foreign,
             "open_sea": sea,
         },
     )
@@ -929,10 +990,10 @@ def prepare_data(
     corridor_half_width_m = float(
         config.get("routing", {}).get("offshore_corridor_half_width_m", 10_000)
     )
-    extent, country_land = boundary_and_land(
+    extent, country_land, foreign_land = boundary_and_land(
         corridor_half_width_m=corridor_half_width_m
     )
-    prepare_coast_and_extent(extent, country_land)
+    prepare_coast_and_extent(extent, country_land, foreign_land)
     prepare_osm(extent)
     prepare_protected_areas(extent)
     prepare_natura2000(extent)
