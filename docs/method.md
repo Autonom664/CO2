@@ -5,7 +5,12 @@
 The current grid is EPSG:25832, aligned to whole 100 m coordinates. The area
 is the OSM coastline-derived Denmark land polygon buffered by 20 km. Any
 storage hotspot outside that buffer is connected to the nearest coast by a
-configurable corridor (10 km half-width by default). The
+configurable corridor (10 km half-width by default). Foreign land (German
+and Swedish OSM land polygons inside the buffer) is removed from the extent,
+so it is NoData rather than cheap sea. The extent excludes the parts of
+unclipped OSM land that fall outside Geofabrik's `denmark.poly`, and the
+removed area is kept as the `foreign_land` layer in `coast_land_water.gpkg`
+for checking. The
 100 m cell size matches the nominal GHSL population source resolution. A
 50 m grid would have about four times as many cells and was not chosen because
 it would raise routing time and memory without improving the input data's
@@ -29,22 +34,36 @@ They use the requested placeholder classes:
 | Watercourse crossing | 4 | Additive linear-feature cost |
 | Lake / mapped water | 7 | Additive polygon cost |
 | Wetland | 7 | Additive polygon cost |
-| Population | 1–10 by quantile | Additive, derived from positive population values |
+| Population | 0 below threshold; 1–10 by quantile above it | Additive on land only; see the population rule below |
 
 Scores are scaled linearly by `grid.resolution_m /
 grid.cost_reference_resolution_m` when the grid changes. The `additive` rule
 adds costs for distinct classes where they overlap. Source layers representing
 the same class are unioned into one class, avoiding double charging within
 Natura 2000 or protected-area subsets. Buildings override all scores as
-barriers; areas outside the study extent are NoData.
+barriers; areas outside the study extent are NoData. Lakes, wetlands and
+watercourses add their cost only on land cells (`surface: land` in the
+layer configuration). Roads and railways also count over sea, so bridges
+add a crossing cost.
 All configured area scores, including buildings and the population quantile
 range, are validated to remain within 1–10. The building score documents its
 relative severity; buildings remain explicitly impassable under `barriers`.
 
 Roads, railways, and watercourses are rasterized with `all_touched: true`.
-Polygon classes use the pixel-center rule by default. Population is area-
-averaged from 100 m data onto the analysis grid and quantile-scaled over
-positive population on traversable land. Cost values are cell traversal
+Polygon classes use the pixel-center rule by default.
+
+**Population rule:**
+- The 100 m GHSL population is area-averaged onto the analysis grid and
+  converted to people per analysis cell.
+- Cells below `costs.population.min_per_cell` add no cost. The default
+  threshold is 1.0 person per 100 m source cell, roughly 100 inhabitants
+  per km², and it scales with cell area if the resolution changes.
+- Land cells at or above the threshold are quantile-scaled to the configured
+  `minimum`–`maximum` range (1–10), with quantiles computed over those
+  qualifying cells only.
+- The effect is that population cost marks villages and towns. Sparse rural
+  areas (about 0.3 people per 100 m cell on average) cost the same as open
+  land. Cost values are cell traversal
 weights; repeated presence of a linear feature in consecutive cells adds the
 configured score in each such cell, rather than modeling one fixed, point-like
 crossing fee.
@@ -64,20 +83,31 @@ The builder outputs:
 
 `src/routing.py` uses `skimage.graph.MCP_Geometric` with fully connected
 8-neighbour movement, so diagonal moves account for their longer distance.
-The curated demo input contains eight emitter/receiving-hub sources and four
-potential storage sites. The router performs one cumulative cost run per
-source/hub and traces it to each storage candidate, producing up to 32
-source-to-storage routes. It selects an 11-edge minimum spanning network
-from those candidate connections. Output features include endpoint IDs/names,
+The curated demo input contains eight emitter/receiving-hub sources and seven
+potential storage sites. Delivery routes run from every source to every
+storage site: 8 × 7 = 56 routes in `routes.geojson`. The minimum spanning
+network is built separately from least-cost paths between all
+15 × 14 / 2 = 105 hotspot pairs. Its 14 edges can therefore link two emitters,
+or an emitter to a hub, directly. The router runs one cumulative cost
+calculation per hotspot and traces each run to the hotspots it needs. Output features include endpoint IDs/names,
 roles, project status, path length, accumulated cost, endpoint snap distances,
 and kilometres along each cost class, including open sea.
 
-The hotspot input contains exactly 12 rows with unique `id`, non-empty
+The hotspot input contains exactly 15 rows with unique `id`, non-empty
 `name`, WGS84 `lon`/`lat`, and `role=source` or `role=storage`. The code keeps
-all-pairs mode for legacy files where no roles are provided. Three onshore
-storage coordinates are village-centre proxies for broad exploration areas;
-Nini West is an approximate offshore field/platform proxy. These anchors are
-for a routing demo, not engineering endpoints or proof of storage suitability.
+all-pairs mode for legacy files where no roles are provided.
+
+How the storage anchors were placed:
+- **Onshore (Gassum, Havnsø, Rødby, Stenlille, Thorning):** the centroid of
+  the Danish Energy Agency's licence or designation polygon. These polygons
+  cover 150–590 km², so the point is not an injection site.
+- **Nini West and Bifrost:** the Nini A and Harald platform positions.
+
+Optional columns carry EU ETS 2024 verified emissions
+(`ets_verified_2024_t`), which are fossil only and exclude biogenic CO2,
+together with planned capture volumes and their sources. The map shows them
+in hotspot popups. These anchors are for a routing demo, not engineering
+endpoints or proof of storage suitability.
 A hotspot can snap only to the nearest traversable cell within
 `routing.max_snap_distance_m`; it errors when outside the cost raster or
 farther away. Deliverable routes are written as
@@ -129,22 +159,24 @@ Status: **Implemented** means the open workflow runs in this repository;
 | Cost Distance / Distance Accumulation | `skimage.graph.MCP_Geometric.find_costs`, one run per source | `routing.py` | Implemented |
 | Cost Back Link / Cost Path / Optimal Path As Line | `MCP_Geometric.traceback` to each storage cell, written as GeoJSON lines | `routing.py` | Implemented |
 | Tabulate Area / Zonal Statistics along routes | Per-step walk of the cost-class bitmask giving `km_*` per class | `routing.py` | Implemented |
-| Optimal Region Connections / Cost Connectivity | Kruskal minimum spanning tree over the source-to-storage route costs | `routing.py` | Partial: see below |
+| Optimal Region Connections / Cost Connectivity | Kruskal minimum spanning tree over least-cost paths between all 105 hotspot pairs | `routing.py` | Partial: see below |
 | Path Distance (slope/vertical factor) | — | — | Not implemented: no terrain model or bathymetry yet |
 | Cost Corridor | Sum of two cost-distance rasters | — | Not implemented: would show near-optimal alternative corridors |
 | Simplify Line (web display) | Shapely `simplify` (`web.route_simplify_m`, default 25 m) before publishing | `build_web.py` | Implemented |
 | Web map / ArcGIS Online | Static MapLibre GL JS site, Nginx container | `build_web.py`, `web/` | Implemented |
 
-**Optimal Region Connections versus this network.** ArcGIS evaluates
-connections between all input regions, optionally through intermediate
-regions. Here, candidate edges are only source→storage routes, so the graph is
-bipartite: the 11-edge spanning network can never link two emitters directly
-(for example a cement works and a nearby export terminal). Two storage sites are
-connected only through a shared source. The network is therefore a minimum
-spanning tree of *candidate delivery routes*, not an optimal trunk-line
-design. Routing all 66 hotspot pairs would give the closer ArcGIS
-equivalent, at the cost of 12 instead of 8 cost-distance runs. Shared-corridor
-discounts, pipeline capacity and flow volumes are not modelled.
+**Optimal Region Connections versus this network.** Like ArcGIS, the network
+considers connections between every pair of inputs (105 pairs for 15
+hotspots), so emitters can link to nearby hubs directly. It differs in three
+ways:
+- The inputs are points, not regions.
+- Each candidate edge is an independent least-cost path, so two edges can run
+  side by side without sharing a corridor.
+- Pipeline capacity, flow volumes and shared-corridor discounts are not
+  modelled.
+
+The result is a minimum spanning tree of independent least-cost paths, not
+an engineered trunk-line design.
 
 ## Interpretation limits
 
@@ -155,6 +187,11 @@ are indicative. Protected-area overlaps can increase costs substantially under
 the additive rule. Coastal water, including fjords and inlets that the selected
 sources do not reliably distinguish, is classed as open sea. There is no
 bathymetry or slope penalty in this version.
+
+The Geofabrik `denmark.poly` boundary runs slightly outside the legal border,
+so a thin strip of German land just south of it may be treated as Danish land
+and costed normally. Nearby German and Swedish *waters* remain traversable
+sea.
 
 The per-class route distances (`km_*`) overlap: every step through a cell is
 counted in each class present in that cell, and open land is present on all
