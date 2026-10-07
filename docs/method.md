@@ -94,7 +94,12 @@ The default display grid is 100 m; this is a deliberate web-performance compromi
 processed GeoPackages preserve the original features, while the browser avoids
 loading millions of building/road GeoJSON features. Image sources are loaded
 once when toggled and are not re-requested on zoom. Routes and hotspots remain
-vector GeoJSON layers.
+vector GeoJSON layers; route lines are simplified to `web.route_simplify_m`
+(default 25 m) for display only, and their attributes come unchanged from
+`routing.py`. The sidebar lists routes by accumulated cost, filterable by
+source. It marks each source's cheapest storage option and the edges in the
+minimum spanning network, and highlights and zooms to the selected route.
+Each layer toggle shows the class's configured score.
 
 The basemap is the standard OpenStreetMap raster tile service with required
 visible attribution and online-use terms. The app itself is static; there is
@@ -106,16 +111,40 @@ DNS and TLS are a separate, explicitly authorized deployment operation.
 
 ## ArcGIS Pro equivalents
 
-| ArcGIS Pro operation | Open-source equivalent used/planned |
-|---|---|
-| Project / Define Projection | GeoPandas, PyProj, and Rasterio CRS-aware reprojection |
-| Clip | GeoPandas/Shapely geometry intersection against the buffered study extent |
-| Polygon to Raster / Feature to Raster | Rasterio `features.rasterize` on the snapped shared grid |
-| Cost Distance | `skimage.graph.MCP_Geometric.find_costs` |
-| Cost Path | `MCP_Geometric.traceback` |
-| Optimal Region Connections | Source-to-storage MCP costs plus Kruskal minimum spanning tree |
-| Raster to Polygon / map display | Cost-class mask raster and georeferenced MapLibre image overlays |
-| ArcGIS Online web map | Static MapLibre GL JS site served by Nginx |
+Status: **Implemented** means the open workflow runs in this repository;
+**Partial** means it covers the ArcGIS tool's role with stated differences;
+**Not implemented** means there is no equivalent yet.
+
+| ArcGIS Pro tool | Open-source equivalent | Where | Status |
+|---|---|---|---|
+| Project / Project Raster | GeoPandas `to_crs`; Rasterio `warp.reproject` | `acquire_data.py`, `cost_surface.py` | Implemented |
+| Buffer | Shapely `buffer` (20 km land buffer; offshore corridor half-width) | `acquire_data.py` | Implemented |
+| Dissolve / Merge | Shapely `union_all` | `acquire_data.py` | Implemented |
+| Clip / Extract by Mask | Geometry intersection with the study extent; cells outside the extent are NoData | `acquire_data.py`, `cost_surface.py` | Implemented |
+| Polygon to Raster / Polyline to Raster | Rasterio `features.rasterize` on the snapped 100 m grid (`all_touched` for lines, cell centre for polygons) | `cost_surface.py` | Implemented |
+| Resample (population) | Rasterio `reproject` with `Resampling.average` | `cost_surface.py` | Implemented |
+| Reclassify / Slice (quantile) | Scores from `config/costs.yaml`; NumPy quantile scaling for population | `cost_surface.py` | Implemented |
+| Weighted Sum / Raster Calculator | NumPy addition of class scores (`combine_rule: additive`), with barriers set to NoData | `cost_surface.py` | Implemented |
+| Snap Pour Point (snap endpoints) | Nearest traversable cell within `routing.max_snap_distance_m` | `routing.py` | Implemented |
+| Cost Distance / Distance Accumulation | `skimage.graph.MCP_Geometric.find_costs`, one run per source | `routing.py` | Implemented |
+| Cost Back Link / Cost Path / Optimal Path As Line | `MCP_Geometric.traceback` to each storage cell, written as GeoJSON lines | `routing.py` | Implemented |
+| Tabulate Area / Zonal Statistics along routes | Per-step walk of the cost-class bitmask giving `km_*` per class | `routing.py` | Implemented |
+| Optimal Region Connections / Cost Connectivity | Kruskal minimum spanning tree over the source-to-storage route costs | `routing.py` | Partial: see below |
+| Path Distance (slope/vertical factor) | — | — | Not implemented: no terrain model or bathymetry yet |
+| Cost Corridor | Sum of two cost-distance rasters | — | Not implemented: would show near-optimal alternative corridors |
+| Simplify Line (web display) | Shapely `simplify` (`web.route_simplify_m`, default 25 m) before publishing | `build_web.py` | Implemented |
+| Web map / ArcGIS Online | Static MapLibre GL JS site, Nginx container | `build_web.py`, `web/` | Implemented |
+
+**Optimal Region Connections versus this network.** ArcGIS evaluates
+connections between all input regions, optionally through intermediate
+regions. Here, candidate edges are only source→storage routes, so the graph is
+bipartite: the 11-edge spanning network can never link two emitters directly
+(for example a cement works and a nearby export terminal). Two storage sites are
+connected only through a shared source. The network is therefore a minimum
+spanning tree of *candidate delivery routes*, not an optimal trunk-line
+design. Routing all 66 hotspot pairs would give the closer ArcGIS
+equivalent, at the cost of 12 instead of 8 cost-distance runs. Shared-corridor
+discounts, pipeline capacity and flow volumes are not modelled.
 
 ## Interpretation limits
 
@@ -126,3 +155,8 @@ are indicative. Protected-area overlaps can increase costs substantially under
 the additive rule. Coastal water, including fjords and inlets that the selected
 sources do not reliably distinguish, is classed as open sea. There is no
 bathymetry or slope penalty in this version.
+
+The per-class route distances (`km_*`) overlap: every step through a cell is
+counted in each class present in that cell, and open land is present on all
+land cells. They do not add up to `length_km`. Read each value as "km of
+route passing through this class".

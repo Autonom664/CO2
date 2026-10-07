@@ -26,7 +26,7 @@ function escapeHtml(value) {
   })[character]);
 }
 
-function makeLayerToggle(id, label, color, checked, onChange) {
+function makeLayerToggle(id, label, color, checked, onChange, score = "") {
   const wrapper = document.createElement("label");
   wrapper.className = "layer-toggle";
   const input = document.createElement("input");
@@ -39,8 +39,37 @@ function makeLayerToggle(id, label, color, checked, onChange) {
   const text = document.createElement("span");
   text.textContent = label;
   wrapper.append(input, swatch, text);
+  if (score) {
+    const badge = document.createElement("span");
+    badge.className = "score-badge";
+    badge.textContent = score;
+    badge.title = score === "barrier"
+      ? "Impassable barrier"
+      : "Configured cost score (1–10, config/costs.yaml)";
+    wrapper.appendChild(badge);
+  }
   wrapper.dataset.layerId = id;
   return wrapper;
+}
+
+function routeKey(properties) {
+  return `${properties.from_id}→${properties.to_id}`;
+}
+
+function geometryBounds(geometry) {
+  const lines = geometry.type === "MultiLineString"
+    ? geometry.coordinates
+    : [geometry.coordinates];
+  const bounds = new maplibregl.LngLatBounds();
+  for (const line of lines) for (const point of line) bounds.extend(point);
+  return bounds;
+}
+
+function geometryMidpoint(geometry) {
+  const line = geometry.type === "MultiLineString"
+    ? geometry.coordinates[0]
+    : geometry.coordinates;
+  return line[Math.floor(line.length / 2)];
 }
 
 function addImageLayer(map, layer) {
@@ -62,9 +91,9 @@ function addImageLayer(map, layer) {
   map.setLayoutProperty(`${layer.id}-raster`, "visibility", "visible");
 }
 
-function addGeoJsonLayer(map, layer) {
+function addGeoJsonLayer(map, layer, data) {
   if (map.getSource(layer.id)) return;
-  map.addSource(layer.id, { type: "geojson", data: layer.url });
+  map.addSource(layer.id, { type: "geojson", data: data || layer.url });
   if (layer.id === "routes") {
     map.addLayer({
       id: "pair-routes",
@@ -75,6 +104,18 @@ function addGeoJsonLayer(map, layer) {
         "line-color": "#d94d41",
         "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.2, 9, 3],
         "line-opacity": 0.78,
+      },
+    });
+    map.addLayer({
+      id: "route-highlight",
+      type: "line",
+      source: "routes",
+      filter: ["==", ["get", "from_id"], "__none__"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#ffd23f",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 4, 4, 9, 8],
+        "line-opacity": 0.95,
       },
     });
   } else if (layer.id === "minimum_spanning_network") {
@@ -95,7 +136,11 @@ function addGeoJsonLayer(map, layer) {
       type: "circle",
       source: "hotspots",
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 4, 9, 8],
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"],
+          4, ["match", ["get", "role"], "storage", 6, 4],
+          9, ["match", ["get", "role"], "storage", 11, 8],
+        ],
         "circle-color": [
           "match",
           ["get", "role"],
@@ -103,8 +148,10 @@ function addGeoJsonLayer(map, layer) {
           "#2878a8",
           "#e28b24",
         ],
-        "circle-stroke-color": "#17333a",
-        "circle-stroke-width": 2,
+        "circle-stroke-color": [
+          "match", ["get", "role"], "storage", "#ffffff", "#17333a",
+        ],
+        "circle-stroke-width": ["match", ["get", "role"], "storage", 3, 2],
       },
     });
   }
@@ -125,7 +172,7 @@ function addRoutePopup(map, event) {
       ["Length", `${Number(properties.length_km).toFixed(2)} km`],
       ["Accumulated cost", Number(properties.accumulated_cost).toFixed(2)],
       ...Object.entries(properties)
-        .filter(([key]) => key.startsWith("km_"))
+        .filter(([key, value]) => key.startsWith("km_") && Number(value) > 0)
         .map(([key, value]) => [
           key.slice(3).replaceAll("_", " "),
           `${Number(value).toFixed(2)} km`,
@@ -135,15 +182,30 @@ function addRoutePopup(map, event) {
       `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(value)}</td></tr>`
     ).join("")}</table>`;
   } else {
+    const tonnes = (value) => {
+      const number = Number(value);
+      return value === "" || value === null || value === undefined || !Number.isFinite(number)
+        ? ""
+        : `${number.toLocaleString("en-GB", { maximumFractionDigits: 0 })} t/yr`;
+    };
     const details = [
       ["Role", properties.role],
       ["Type", properties.site_type],
       ["Project status", properties.project_status],
+      ["ETS 2024 (fossil)", tonnes(properties.ets_verified_2024_t)],
+      ["Planned capture", tonnes(properties.planned_capture_tpa)],
+      ["Capture basis", properties.capture_basis],
       ["Location basis", properties.location_basis],
     ].filter(([, value]) => value);
     rows = `<table class="popup-table">${details.map(([key, value]) =>
       `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(value)}</td></tr>`
     ).join("")}</table>`;
+    if (properties.ets_verified_2024_t !== undefined && properties.ets_verified_2024_t !== null && properties.ets_verified_2024_t !== "") {
+      rows += '<p class="popup-note">EU ETS figures exclude biogenic CO₂, so biomass and waste plants can capture far more than they report.</p>';
+    }
+    if (properties.capture_source_url) {
+      rows += `<p><a href="${escapeHtml(properties.capture_source_url)}" target="_blank" rel="noopener noreferrer">Capture source</a></p>`;
+    }
     if (properties.source_url) {
       rows += `<p><a href="${escapeHtml(properties.source_url)}" target="_blank" rel="noopener noreferrer">Location source</a></p>`;
     }
@@ -182,18 +244,137 @@ function setupInputLayers(map, layers) {
             map.setLayoutProperty(`${layer.id}-raster`, "visibility", "none");
           }
         },
+        layer.score,
       ));
     }
     container.appendChild(section);
   }
 }
 
-function setupRoutes(map, routeLayers) {
+async function fetchGeoJson(url) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+  return response.json();
+}
+
+function setRouteLayerVisible(map, visible) {
+  for (const layerId of ["pair-routes", "route-highlight"]) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
+    }
+  }
+  const toggle = document.querySelector('[data-layer-id="routes"] input');
+  if (toggle) toggle.checked = visible;
+}
+
+function selectRoute(map, feature, { zoom = true, popup = true } = {}) {
+  const properties = feature.properties;
+  setRouteLayerVisible(map, true);
+  map.setFilter("route-highlight", [
+    "all",
+    ["==", ["get", "from_id"], properties.from_id],
+    ["==", ["get", "to_id"], properties.to_id],
+  ]);
+  for (const row of document.querySelectorAll(".route-row")) {
+    row.classList.toggle("selected", row.dataset.routeKey === routeKey(properties));
+  }
+  if (zoom) {
+    map.fitBounds(geometryBounds(feature.geometry), { padding: 60, maxZoom: 10 });
+  }
+  if (popup) {
+    addRoutePopup(map, {
+      features: [feature],
+      lngLat: geometryMidpoint(feature.geometry),
+    });
+  }
+}
+
+function setupRouteList(map, routes, networkKeys) {
+  const container = document.getElementById("route-list");
+  const filter = document.getElementById("route-filter");
+  const features = routes.features
+    .filter((feature) => feature.geometry)
+    .sort((a, b) => a.properties.accumulated_cost - b.properties.accumulated_cost);
+  const cheapestBySource = new Map();
+  for (const feature of features) {
+    if (!cheapestBySource.has(feature.properties.from_id)) {
+      cheapestBySource.set(feature.properties.from_id, routeKey(feature.properties));
+    }
+  }
+  const sources = [...new Map(features.map((feature) => [
+    feature.properties.from_id, feature.properties.from_name,
+  ])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  for (const [id, name] of sources) {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = name;
+    filter.appendChild(option);
+  }
+
+  function render() {
+    container.replaceChildren();
+    const selected = filter.value;
+    const visible = features.filter((feature) =>
+      !selected || feature.properties.from_id === selected
+    );
+    for (const feature of visible) {
+      const properties = feature.properties;
+      const key = routeKey(properties);
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "route-row";
+      row.dataset.routeKey = key;
+      const title = document.createElement("span");
+      title.className = "route-title";
+      title.textContent = `${properties.from_name} → ${properties.to_name}`;
+      const meta = document.createElement("span");
+      meta.className = "route-meta";
+      const sea = Number(properties.km_open_sea || 0);
+      meta.textContent =
+        `${Number(properties.length_km).toFixed(0)} km · cost ${Number(properties.accumulated_cost).toFixed(0)}`
+        + (sea > 0 ? ` · ${sea.toFixed(0)} km sea` : "");
+      row.append(title, meta);
+      const badges = document.createElement("span");
+      badges.className = "route-badges";
+      if (cheapestBySource.get(properties.from_id) === key) {
+        badges.insertAdjacentHTML("beforeend", '<span class="badge best" title="Lowest-cost storage option for this source">best</span>');
+      }
+      if (networkKeys.has(key)) {
+        badges.insertAdjacentHTML("beforeend", '<span class="badge mst" title="Part of the minimum spanning network">network</span>');
+      }
+      row.appendChild(badges);
+      row.addEventListener("click", () => selectRoute(map, feature));
+      container.appendChild(row);
+    }
+  }
+  filter.addEventListener("change", render);
+  render();
+  document.getElementById("route-list-wrap").hidden = false;
+}
+
+async function setupRoutes(map, manifest) {
+  const routeLayers = manifest.route_layers || [];
   const section = document.getElementById("routes-section");
   const container = document.getElementById("route-layers");
-  if (!routeLayers.length) return;
   section.hidden = false;
+  if (!routeLayers.length) {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = manifest.route_status
+      || "Route outputs have not been generated yet.";
+    container.appendChild(note);
+    return;
+  }
+  const data = {};
+  await Promise.all(routeLayers.map(async (layer) => {
+    try {
+      data[layer.id] = await fetchGeoJson(layer.url);
+    } catch (error) {
+      setStatus(`Route data could not be loaded: ${error.message}`, "warning");
+    }
+  }));
   for (const layer of routeLayers) {
+    if (!data[layer.id]) continue;
     const color = layer.id === "hotspots"
       ? "#f5f3ec"
       : layer.id === "minimum_spanning_network" ? "#2c296e" : "#d94d41";
@@ -204,20 +385,37 @@ function setupRoutes(map, routeLayers) {
       color,
       defaultVisible,
       (visible) => {
-        if (visible) addGeoJsonLayer(map, layer);
+        if (layer.id === "routes") {
+          setRouteLayerVisible(map, visible);
+          return;
+        }
         const mapLayerId = routeLayerIds[layer.id];
         if (map.getLayer(mapLayerId)) {
           map.setLayoutProperty(mapLayerId, "visibility", visible ? "visible" : "none");
         }
       },
     ));
-    addGeoJsonLayer(map, layer);
-    const mapLayerId = routeLayerIds[layer.id];
-    if (!defaultVisible) {
-      map.setLayoutProperty(mapLayerId, "visibility", "none");
-    }
+    addGeoJsonLayer(map, layer, data[layer.id]);
+    if (!defaultVisible) setRouteLayerVisible(map, false);
+  }
+  if (map.getLayer("hotspots")) map.moveLayer("hotspots");
+  document.getElementById("hotspot-legend").hidden = !data.hotspots;
+  if (data.routes) {
+    const networkKeys = new Set(
+      (data.minimum_spanning_network?.features || [])
+        .map((feature) => routeKey(feature.properties))
+    );
+    setupRouteList(map, data.routes, networkKeys);
+    map.on("click", "pair-routes", (event) => {
+      const clicked = event.features && event.features[0];
+      const feature = clicked && data.routes.features.find((candidate) =>
+        routeKey(candidate.properties) === routeKey(clicked.properties)
+      );
+      if (feature) selectRoute(map, feature, { zoom: false, popup: false });
+    });
   }
   for (const layerId of ["pair-routes", "mst-network", "hotspots"]) {
+    if (!map.getLayer(layerId)) continue;
     map.on("click", layerId, (event) => addRoutePopup(map, event));
     map.on("mouseenter", layerId, () => { map.getCanvas().style.cursor = "pointer"; });
     map.on("mouseleave", layerId, () => { map.getCanvas().style.cursor = ""; });
@@ -291,7 +489,7 @@ async function startMap() {
       );
     });
     setupInputLayers(map, manifest.layers);
-    setupRoutes(map, manifest.route_layers);
+    setupRoutes(map, manifest);
     map.fitBounds(
       [
         manifest.bounds[3],

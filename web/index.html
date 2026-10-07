@@ -37,6 +37,19 @@
         <section id="routes-section" class="panel-section" hidden>
           <h2>Routing</h2>
           <div id="route-layers"></div>
+          <div id="hotspot-legend" class="hotspot-legend" hidden>
+            <span><span class="dot source-dot"></span>Emitter / hub</span>
+            <span><span class="dot storage-dot"></span>Storage site</span>
+          </div>
+          <div id="route-list-wrap" hidden>
+            <h2 class="subheading">Compare routes</h2>
+            <label class="route-filter-label" for="route-filter">Source</label>
+            <select id="route-filter">
+              <option value="">All sources</option>
+            </select>
+            <p class="muted">Sorted by accumulated cost. Select a route to highlight and zoom to it.</p>
+            <div id="route-list" class="route-list"></div>
+          </div>
         </section>
         <div id="input-layers"></div>
         <footer class="sidebar-footer">

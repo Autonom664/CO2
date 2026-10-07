@@ -52,6 +52,34 @@ def load_config(path: Path) -> dict[str, Any]:
     return config
 
 
+def class_score_label(config: dict[str, Any], class_name: str) -> str:
+    """Return the configured 1–10 score of a class bit as display text."""
+    if class_name in config.get("barriers", []):
+        return "barrier"
+    cost_key = class_name
+    for layer in config.get("layers", {}).values():
+        if layer.get("class_bit") == class_name:
+            cost_key = layer["cost"]
+            break
+    score = config.get("costs", {}).get(cost_key)
+    if isinstance(score, dict):
+        return f"{score.get('minimum', '?')}–{score.get('maximum', '?')}"
+    return "" if score is None else str(score)
+
+
+def publish_lines(source: Path, destination: Path, tolerance_m: float) -> None:
+    """Copy route GeoJSON for the browser, simplified in metres and rounded."""
+    frame = gpd.read_file(source)
+    if tolerance_m > 0 and not frame.empty:
+        projected = frame.to_crs("EPSG:25832")
+        projected["geometry"] = projected.geometry.simplify(
+            tolerance_m, preserve_topology=False
+        )
+        frame = projected.to_crs("EPSG:4326")
+    destination.unlink(missing_ok=True)
+    frame.to_file(destination, driver="GeoJSON", COORDINATE_PRECISION=6)
+
+
 def rgba_from_hex(color: str, alpha: int = 225) -> tuple[int, int, int, int]:
     value = color.lstrip("#")
     if len(value) != 6:
@@ -305,6 +333,7 @@ def build_web(
                     "url": f"data/layers/{image_path.name}",
                     "kind": "image",
                     "default_visible": False,
+                    "score": class_score_label(config, class_name),
                     "cells": int(np.count_nonzero(source_layer)),
                 }
             )
@@ -333,13 +362,16 @@ def build_web(
                 "url": "data/minimum_spanning_network.geojson",
             },
         ]
-        for key, relative_path in (
-            ("hotspots", "hotspots.geojson"),
-            ("routes", "routes.geojson"),
-            ("minimum_spanning_network", "minimum_spanning_network.geojson"),
-        ):
-            source_path = PROCESSED / relative_path
-            (output_dir / "data" / relative_path).write_bytes(source_path.read_bytes())
+        (output_dir / "data" / "hotspots.geojson").write_bytes(
+            (PROCESSED / "hotspots.geojson").read_bytes()
+        )
+        tolerance = float(config.get("web", {}).get("route_simplify_m", 25))
+        for relative_path in ("routes.geojson", "minimum_spanning_network.geojson"):
+            publish_lines(
+                PROCESSED / relative_path,
+                output_dir / "data" / relative_path,
+                tolerance,
+            )
 
     info = {
         "title": "Denmark CO₂ pipeline routing",
