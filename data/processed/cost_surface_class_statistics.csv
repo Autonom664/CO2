@@ -1,0 +1,13 @@
+class,cost_score,cells,area_km2,total_cost_contribution,impassable
+open_land_base,0.4,4235452,42354.52,1694180.8,false
+open_sea_base,8.0,4873361,48733.61,38986888.0,false
+road_crossing,2.0,1665883,16658.83,3331766.0,false
+railway_crossing,4.0,34817,348.17,139268.0,false
+watercourse_crossing,4.0,262343,2623.43,1049372.0,false
+urban_area,20.0,241987,2419.87,4839740.0,false
+lake,16.0,128554,1285.54,2056864.0,false
+wetland,12.0,110689,1106.89,1328268.0,false
+natura2000,40.0,1940531,19405.31,77621240.0,false
+protected_nature,20.0,576524,5765.24,11530480.0,false
+population,quantile-scaled,1463443,14634.43,14923235.0,false
+building_barrier,barrier,73158,731.58,barrier,true

@@ -1,0 +1,6 @@
+FROM nginx:stable-alpine
+
+COPY deploy/nginx-app.conf /etc/nginx/conf.d/default.conf
+COPY web/ /usr/share/nginx/html/
+
+EXPOSE 8080

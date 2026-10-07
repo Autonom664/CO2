@@ -1,0 +1,117 @@
+# Initial subjective scoring assumptions; tune these before interpreting routes.
+# Values are relative cell costs, not monetary estimates.
+grid:
+  crs: EPSG:25832
+  resolution_m: 100
+  cost_reference_resolution_m: 250
+  combine_rule: additive
+  nodata: -9999
+
+routing:
+  max_snap_distance_m: 2000
+  offshore_corridor_half_width_m: 10000
+
+web:
+  display_resolution_m: 100
+
+barriers:
+  - building_barrier
+
+costs:
+  open_land: 1
+  open_sea: 2
+  road_crossing: 3
+  railway_crossing: 5
+  urban_area: 8
+  building_barrier: 10
+  natura2000: 9
+  protected_nature: 8
+  watercourse_crossing: 4
+  lake: 7
+  wetland: 7
+  population:
+    enabled: true
+    minimum: 1
+    maximum: 10
+    quantiles: 100
+
+rasterization:
+  # Linear features are burned into every touched cell to prevent diagonal gaps.
+  linear_all_touched: true
+  polygon_all_touched: false
+
+layers:
+  roads:
+    file: infrastructure.gpkg
+    layer: roads
+    cost: road_crossing
+    geometry: linear
+  railways:
+    file: infrastructure.gpkg
+    layer: railways
+    cost: railway_crossing
+    geometry: linear
+  watercourses:
+    file: infrastructure.gpkg
+    layer: watercourses
+    cost: watercourse_crossing
+    geometry: linear
+  urban_areas:
+    file: water_and_urban.gpkg
+    layer: urban_areas
+    cost: urban_area
+    geometry: polygon
+  lakes:
+    file: water_and_urban.gpkg
+    layer: lakes
+    cost: lake
+    geometry: polygon
+  wetlands:
+    file: water_and_urban.gpkg
+    layer: wetlands
+    cost: wetland
+    geometry: polygon
+  natura2000_habitats:
+    file: natura2000.gpkg
+    layer: habitats
+    cost: natura2000
+    class_bit: natura2000_habitats
+    geometry: polygon
+  natura2000_birds:
+    file: natura2000.gpkg
+    layer: birds
+    cost: natura2000
+    class_bit: natura2000_birds
+    geometry: polygon
+  protected_nature_s3:
+    file: protected_areas.gpkg
+    layer: protected_nature_s3
+    cost: protected_nature
+    class_bit: protected_nature_s3
+    geometry: polygon
+  protected_reserves:
+    file: protected_areas.gpkg
+    layer: fredninger
+    cost: protected_nature
+    class_bit: protected_reserves
+    geometry: polygon
+
+class_bits:
+  open_land: 1
+  open_sea: 2
+  road_crossing: 4
+  railway_crossing: 8
+  watercourse_crossing: 16
+  urban_area: 32
+  lake: 64
+  wetland: 128
+  natura2000_habitats: 256
+  natura2000_birds: 512
+  protected_nature_s3: 1024
+  protected_reserves: 2048
+  population: 4096
+  building_barrier: 8192
+
+route_classes:
+  natura2000: [natura2000_habitats, natura2000_birds]
+  protected_nature: [protected_nature_s3, protected_reserves]

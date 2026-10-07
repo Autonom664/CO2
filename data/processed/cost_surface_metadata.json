@@ -1,0 +1,28 @@
+{
+  "crs": "EPSG:25832",
+  "resolution_m": 100,
+  "cost_reference_resolution_m": 250,
+  "cost_scale_factor": 0.4,
+  "width": 4915,
+  "height": 3926,
+  "bounds": [
+    421600,
+    6029700,
+    913100,
+    6422300
+  ],
+  "combine_rule": "additive",
+  "nodata_and_barrier_value": -9999.0,
+  "traversable_cells": 9108813,
+  "barrier_cells": 73158,
+  "outside_extent_cells": 10114319,
+  "cost_min": 0.4000000059604645,
+  "cost_max": 115.4294204711914,
+  "population_summary": {
+    "positive_population_cells": 1463443,
+    "minimum_population": 3.4752563049522678e-09,
+    "maximum_population": 517.7658081054688
+  },
+  "statistics_csv": "data\\processed\\cost_surface_class_statistics.csv",
+  "class_mask_raster": "data\\processed\\cost_class_mask_100m.tif"
+}

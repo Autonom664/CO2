@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.conda/
+
+# Build and test outputs
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Downloaded source data
+data/raw/*
+!data/raw/.gitkeep
+
+# Regenerated geospatial analysis data
+data/processed/*.tif
+data/processed/*.gpkg

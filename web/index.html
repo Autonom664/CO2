@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Open-data least-cost CO2 pipeline routing analysis for Denmark.">
+    <title>Denmark CO₂ Pipeline Routing</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+    <link rel="stylesheet" href="app.css">
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Denmark CO₂ pipeline routing</h1>
+        <p id="analysis-meta">Open-data least-cost analysis</p>
+      </div>
+      <div class="header-actions">
+        <button id="panel-toggle" type="button" aria-expanded="true" aria-controls="sidebar">Layers</button>
+      </div>
+    </header>
+    <main class="workspace">
+      <aside id="sidebar" class="sidebar" aria-label="Map layers and information">
+        <div id="status" class="status" role="status">Loading map data…</div>
+        <section class="panel-section">
+          <h2>Cost surface</h2>
+          <label class="layer-toggle">
+            <input id="cost-toggle" type="checkbox" checked>
+            <span class="swatch cost-swatch"></span>
+            <span>Relative cumulative cost</span>
+          </label>
+          <div class="gradient-legend" aria-label="Low to high cost scale"></div>
+          <div class="legend-labels"><span id="cost-low">Low</span><span id="cost-high">High</span></div>
+          <p class="muted">Redder cells are more costly. Buildings and areas outside the analysis extent are impassable.</p>
+        </section>
+        <section id="routes-section" class="panel-section" hidden>
+          <h2>Routing</h2>
+          <div id="route-layers"></div>
+        </section>
+        <div id="input-layers"></div>
+        <footer class="sidebar-footer">
+          <p>Scores are adjustable assumptions, not monetary estimates.</p>
+          <p>Basemap © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>.</p>
+          <p><a href="SOURCES.md">Data sources and licences</a></p>
+        </footer>
+      </aside>
+      <section class="map-wrap" aria-label="Interactive Denmark map">
+        <div id="map"></div>
+        <div id="map-loading" class="map-loading">Preparing interactive map…</div>
+        <div id="scale-note" class="map-note">Map overlays shown at analysis-grid display resolution.</div>
+      </section>
+    </main>
+  </body>
+</html>

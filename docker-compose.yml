@@ -1,0 +1,21 @@
+services:
+  co2-map:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: co2-map
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:8080"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

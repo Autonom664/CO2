@@ -1,0 +1,14 @@
+name: co2-routing
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.11
+  - geopandas
+  - pyogrio
+  - shapely>=2
+  - rasterio
+  - numpy
+  - pyarrow
+  - scikit-image
+  - pyyaml
+  - pillow
