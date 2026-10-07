@@ -9,7 +9,17 @@ const routeLayerIds = {
   routes: "pair-routes",
   minimum_spanning_network: "mst-network",
   hotspots: "hotspots",
+  corridors: ["corridors-fill", "corridors-line"],
 };
+const noFeature = ["==", ["get", "from_id"], "__none__"];
+
+function setLayersVisible(map, ids, visible) {
+  for (const id of [].concat(ids)) {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
+    }
+  }
+}
 
 function setStatus(message, severity = "ok") {
   statusElement.textContent = message;
@@ -139,6 +149,22 @@ function addGeoJsonLayer(map, layer, data) {
         "line-opacity": 0.95,
       },
     });
+  } else if (layer.id === "corridors") {
+    const beforeId = map.getLayer("pair-routes") ? "pair-routes" : undefined;
+    map.addLayer({
+      id: "corridors-fill",
+      type: "fill",
+      source: "corridors",
+      filter: noFeature,
+      paint: { "fill-color": "#ffd23f", "fill-opacity": 0.22 },
+    }, beforeId);
+    map.addLayer({
+      id: "corridors-line",
+      type: "line",
+      source: "corridors",
+      filter: noFeature,
+      paint: { "line-color": "#b8860b", "line-width": 1.2, "line-dasharray": [2, 2] },
+    }, beforeId);
   } else if (layer.id === "hotspots") {
     map.addLayer({
       id: "hotspots",
@@ -279,11 +305,15 @@ function setRouteLayerVisible(map, visible) {
 function selectRoute(map, feature, { zoom = true, popup = true } = {}) {
   const properties = feature.properties;
   setRouteLayerVisible(map, true);
-  map.setFilter("route-highlight", [
+  const pairFilter = [
     "all",
     ["==", ["get", "from_id"], properties.from_id],
     ["==", ["get", "to_id"], properties.to_id],
-  ]);
+  ];
+  map.setFilter("route-highlight", pairFilter);
+  for (const id of routeLayerIds.corridors) {
+    if (map.getLayer(id)) map.setFilter(id, pairFilter);
+  }
   for (const row of document.querySelectorAll(".route-row")) {
     row.classList.toggle("selected", row.dataset.routeKey === routeKey(properties));
   }
@@ -384,9 +414,11 @@ async function setupRoutes(map, manifest) {
   }));
   for (const layer of routeLayers) {
     if (!data[layer.id]) continue;
-    const color = layer.id === "hotspots"
-      ? "#f5f3ec"
-      : layer.id === "minimum_spanning_network" ? "#2c296e" : "#d94d41";
+    const color = {
+      hotspots: "#f5f3ec",
+      minimum_spanning_network: "#2c296e",
+      corridors: "#ffd23f",
+    }[layer.id] || "#d94d41";
     const defaultVisible = layer.id !== "routes";
     container.appendChild(makeLayerToggle(
       layer.id,
@@ -398,10 +430,7 @@ async function setupRoutes(map, manifest) {
           setRouteLayerVisible(map, visible);
           return;
         }
-        const mapLayerId = routeLayerIds[layer.id];
-        if (map.getLayer(mapLayerId)) {
-          map.setLayoutProperty(mapLayerId, "visibility", visible ? "visible" : "none");
-        }
+        setLayersVisible(map, routeLayerIds[layer.id], visible);
       },
     ));
     addGeoJsonLayer(map, layer, data[layer.id]);

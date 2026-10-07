@@ -366,6 +366,19 @@ def build_web(
         (output_dir / "data" / "hotspots.geojson").write_bytes(
             (PROCESSED / "hotspots.geojson").read_bytes()
         )
+        corridors = output_dir / "data" / "corridors.geojson"
+        if (
+            corridors.exists()
+            and corridors.stat().st_mtime >= (PROCESSED / "routes.geojson").stat().st_mtime
+        ):
+            route_layers.append(
+                {
+                    "id": "corridors",
+                    "label": "Corridor of selected route (≤5% extra cost)",
+                    "kind": "geojson",
+                    "url": "data/corridors.geojson",
+                }
+            )
         tolerance = float(config.get("web", {}).get("route_simplify_m", 25))
         for relative_path in ("routes.geojson", "minimum_spanning_network.geojson"):
             publish_lines(

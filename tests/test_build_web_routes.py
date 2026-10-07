@@ -301,6 +301,19 @@ class RouteManifestTests(WebFixture):
         self.assertIsNone(blank["ets_verified_2024_t"])
         self.assertEqual(blank["capture_basis"], "")
 
+    def test_corridors_are_listed_only_when_current(self) -> None:
+        self.add_hotspots_and_routes()
+        corridors = self.output / "data" / "corridors.geojson"
+        corridors.parent.mkdir(parents=True)
+        corridors.write_text('{"type": "FeatureCollection", "features": []}')
+        past = time.time() - 30
+        os.utime(corridors, (past, past))
+        stale = self.build()
+        self.assertNotIn("corridors", [l["id"] for l in stale["route_layers"]])
+        os.utime(corridors, None)
+        current = self.build()
+        self.assertIn("corridors", [l["id"] for l in current["route_layers"]])
+
     def test_every_overlay_shares_the_display_grid(self) -> None:
         manifest = self.build()
         sizes = set()
