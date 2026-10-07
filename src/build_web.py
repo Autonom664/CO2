@@ -30,7 +30,8 @@ LOG = logging.getLogger("build_web")
 LAYER_PRESENTATION = {
     "open_land": ("Open land", "#73aa62", "Base surface"),
     "open_sea": ("Open sea", "#3987bd", "Base surface"),
-    "road_crossing": ("Roads", "#e35b45", "Infrastructure"),
+    "road_major": ("Major roads (motorway–primary)", "#e35b45", "Infrastructure"),
+    "road_minor": ("Minor roads (secondary–tertiary)", "#f2a07b", "Infrastructure"),
     "railway_crossing": ("Railways", "#8a54a2", "Infrastructure"),
     "watercourse_crossing": ("Watercourses", "#198cc2", "Water"),
     "urban_area": ("Urban areas", "#de8c3d", "Land use"),
@@ -40,7 +41,10 @@ LAYER_PRESENTATION = {
     "natura2000_birds": ("Natura 2000 birds", "#f07838", "Protected areas"),
     "protected_nature_s3": ("Protected nature (§3)", "#6d994d", "Protected areas"),
     "protected_reserves": ("Protected reserves", "#a162a8", "Protected areas"),
+    "forest": ("Forest", "#2f7d4a", "Land use"),
     "population": ("Population density", "#d84141", "Population"),
+    "dwelling_proximity": ("Within 200 m of buildings", "#c2185b", "Population"),
+    "parallel_corridor": ("Alongside existing infrastructure", "#00897b", "Infrastructure"),
     "building_barrier": ("Buildings (barriers)", "#242424", "Infrastructure"),
 }
 
@@ -57,6 +61,9 @@ def class_score_label(config: dict[str, Any], class_name: str) -> str:
     """Return the configured 1–10 score of a class bit as display text."""
     if class_name in config.get("barriers", []):
         return "barrier"
+    if class_name == "parallel_corridor":
+        factor = config.get("parallel_corridor", {}).get("factor")
+        return "" if factor is None else f"×{factor:g}"
     cost_key = class_name
     for layer in config.get("layers", {}).values():
         if layer.get("class_bit") == class_name:
@@ -64,6 +71,8 @@ def class_score_label(config: dict[str, Any], class_name: str) -> str:
             break
     score = config.get("costs", {}).get(cost_key)
     if isinstance(score, dict):
+        if "max_score" in score:
+            return f"0–{score['max_score']:g}"
         return f"{score.get('minimum', '?')}–{score.get('maximum', '?')}"
     return "" if score is None else str(score)
 
@@ -314,7 +323,7 @@ def build_web(
                     "Cost-class bit assignments differ from config; "
                     "rebuild the cost surface before building the web map."
                 )
-            class_mask = mask_source.read(1)
+            class_mask = mask_source.read(1).astype(np.uint32)
 
         display_crs = "EPSG:3857"
         display_resolution = int(config.get("web", {}).get("display_resolution_m", 250))

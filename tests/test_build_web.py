@@ -20,7 +20,8 @@ class BuildWebTests(unittest.TestCase):
         class_bits = {
             "open_land": 1,
             "open_sea": 2,
-            "road_crossing": 4,
+            "road_major": 4,
+            "road_minor": 16384,
             "railway_crossing": 8,
             "watercourse_crossing": 16,
             "urban_area": 32,
@@ -32,6 +33,9 @@ class BuildWebTests(unittest.TestCase):
             "protected_reserves": 2048,
             "population": 4096,
             "building_barrier": 8192,
+            "forest": 32768,
+            "dwelling_proximity": 65536,
+            "parallel_corridor": 131072,
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -56,12 +60,12 @@ class BuildWebTests(unittest.TestCase):
                 **(profile | {"dtype": "float32", "nodata": -9999}),
             ) as dataset:
                 dataset.write(cost, 1)
-            classes = np.full((10, 10), class_bits["open_land"], dtype=np.uint16)
-            classes[4:6, 4:6] |= class_bits["road_crossing"]
+            classes = np.full((10, 10), class_bits["open_land"], dtype=np.uint32)
+            classes[4:6, 4:6] |= class_bits["road_major"]
             with rasterio.open(
                 processed / "cost_class_mask_100m.tif",
                 "w",
-                **(profile | {"dtype": "uint16", "nodata": 0}),
+                **(profile | {"dtype": "uint32", "nodata": 0}),
             ) as dataset:
                 dataset.write(classes, 1)
                 dataset.update_tags(class_bits=json.dumps(class_bits))
@@ -103,7 +107,7 @@ class BuildWebTests(unittest.TestCase):
             self.assertFalse(manifest["routes_available"])
             self.assertEqual(manifest["display_resolution_m"], 250)
             self.assertTrue((result / "data" / "layers" / "cost_surface_t0_0.png").exists())
-            self.assertTrue((result / "data" / "layers" / "road_crossing_t0_0.png").exists())
+            self.assertTrue((result / "data" / "layers" / "road_major_t0_0.png").exists())
             self.assertEqual(manifest["display_crs"], "EPSG:3857")
             image_paths = list((result / "data" / "layers").glob("*.png"))
             with Image.open(image_paths[0]) as reference:

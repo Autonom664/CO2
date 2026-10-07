@@ -25,7 +25,8 @@ They use the requested placeholder classes:
 |---|---:|---|
 | Open land | 1 | Base cost |
 | Open sea | 2 | Base cost; coastal water is open sea |
-| Road crossing | 3 | Additive linear-feature cost |
+| Major road (motorway, trunk, primary + links) | 4 | Additive linear-feature cost |
+| Minor road (secondary, tertiary + links) | 2 | Additive linear-feature cost |
 | Railway crossing | 5 | Additive linear-feature cost |
 | Urban area | 8 | Additive polygon cost |
 | Buildings | 10 | Impassable NoData barrier |
@@ -34,13 +35,18 @@ They use the requested placeholder classes:
 | Watercourse crossing | 4 | Additive linear-feature cost |
 | Lake / mapped water | 7 | Additive polygon cost |
 | Wetland | 7 | Additive polygon cost |
+| Forest (OSM `landuse=forest`) | 6 | Additive polygon cost, land only |
+| Near buildings | 0–6, falling linearly to 0 at 200 m | Additive on land; see the rules below |
+| Alongside existing infrastructure | ×0.8 | Discount; see the rules below |
 | Population | 0 below threshold; 1–10 by quantile above it | Additive on land only; see the population rule below |
 
 Scores are scaled linearly by `grid.resolution_m /
 grid.cost_reference_resolution_m` when the grid changes. The `additive` rule
-adds costs for distinct classes where they overlap. Source layers representing
-the same class are unioned into one class, avoiding double charging within
-Natura 2000 or protected-area subsets. Buildings override all scores as
+adds costs for distinct classes where they overlap. The exception is the
+`protected_areas` combine group: Natura 2000 and other protected nature
+take the **higher** of the two scores (9, not 9 + 8) where they overlap.
+Source layers representing the same class are unioned into one class,
+avoiding double charging within Natura 2000 or protected-area subsets. Buildings override all scores as
 barriers; areas outside the study extent are NoData. Lakes, wetlands and
 watercourses add their cost only on land cells (`surface: land` in the
 layer configuration). Roads and railways also count over sea, so bridges
@@ -51,6 +57,41 @@ relative severity; buildings remain explicitly impassable under `barriers`.
 
 Roads, railways, and watercourses are rasterized with `all_touched: true`.
 Polygon classes use the pixel-center rule by default.
+
+**Roads.** Only major and minor roads are costed. Residential, service and
+unclassified roads, tracks, paths and cycleways are excluded. When every
+OSM way was included, road cells covered 39% of land and acted as a
+background charge that pushed routes *away* from existing infrastructure.
+
+**Near buildings (CO2 safety distance).** For land cells within
+`costs.dwelling_proximity.max_distance_m` (200 m) of a building cell, the
+model adds `max_score × (1 − d / 200 m)`, where `d` is the distance between
+cell centres. Buildings themselves stay impassable barriers. At 100 m
+resolution this works out as follows:
+- An adjacent cell (`d` = 100 m) adds 3.
+- A diagonal neighbour (`d` ≈ 141 m) adds about 1.8.
+- Cells 200 m or more away add nothing.
+
+This approximates the safety distances that apply to dense-phase CO2
+pipelines.
+
+**Alongside existing infrastructure.** Pipelines are normally laid next to
+existing linear infrastructure.
+- **The infrastructure counted:**
+  - major roads and railways
+  - OSM `power=line` at 132 kV or more
+  - OSM gas pipelines (`man_made=pipeline`, `substance=gas`)
+- **The band:** cells 50–300 m from one of these assets, excluding the asset
+  cells themselves.
+- **The discount:** the cost of a cell in the band is multiplied by
+  `parallel_corridor.factor` (0.8), but never goes below the open-land base
+  cost.
+- **Order:** the discount is applied after the additive classes and before
+  the population cost.
+
+Specific OSM ways can be left out with `parallel_corridor.exclude_osm_ids`,
+which the Baltic Pipe validation uses (see `validation/README.md`) so the
+check does not reuse the pipeline it is checking against.
 
 **Population rule:**
 - The 100 m GHSL population is area-averaged onto the analysis grid and

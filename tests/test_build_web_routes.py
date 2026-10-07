@@ -31,6 +31,7 @@ CONFIG = {
         "natura2000": 9,
         "protected_nature": 8,
         "population": {"minimum": 1, "maximum": 10},
+        "dwelling_proximity": {"enabled": True, "max_distance_m": 200, "max_score": 6},
     },
     "layers": {
         "natura2000_birds": {"cost": "natura2000", "class_bit": "natura2000_birds"},
@@ -39,6 +40,7 @@ CONFIG = {
             "class_bit": "protected_reserves",
         },
     },
+    "parallel_corridor": {"factor": 0.8},
     "class_bits": CLASS_BITS,
 }
 
@@ -58,12 +60,12 @@ def write_rasters(processed: Path) -> None:
         **(profile | {"dtype": "float32", "nodata": -9999}),
     ) as dataset:
         dataset.write(np.ones((10, 20), dtype=np.float32), 1)
-    classes = np.full((10, 20), CLASS_BITS["open_land"], dtype=np.uint16)
+    classes = np.full((10, 20), CLASS_BITS["open_land"], dtype=np.uint32)
     classes[:, 10:] = CLASS_BITS["open_sea"]
     with rasterio.open(
         processed / "cost_class_mask_100m.tif",
         "w",
-        **(profile | {"dtype": "uint16", "nodata": 0}),
+        **(profile | {"dtype": "uint32", "nodata": 0}),
     ) as dataset:
         dataset.write(classes, 1)
         dataset.update_tags(class_bits=json.dumps(CLASS_BITS))
@@ -164,6 +166,12 @@ class ScoreLabelTests(unittest.TestCase):
         )
         self.assertEqual(build_web.class_score_label(CONFIG, "population"), "1–10")
         self.assertEqual(build_web.class_score_label(CONFIG, "lake"), "")
+        self.assertEqual(
+            build_web.class_score_label(CONFIG, "dwelling_proximity"), "0–6"
+        )
+        self.assertEqual(
+            build_web.class_score_label(CONFIG, "parallel_corridor"), "×0.8"
+        )
 
 
 class DisplayGridTests(unittest.TestCase):
