@@ -255,7 +255,30 @@ class RouteManifestTests(WebFixture):
         os.utime(self.config, (future, future))
         manifest = self.build()
         self.assertFalse(manifest["routes_available"])
-        self.assertIn("older", manifest["route_status"])
+        self.assertIn("out of date", manifest["route_status"])
+
+    def write_fingerprint(self, value: str) -> None:
+        processed = self.root / "data" / "processed"
+        (processed / "cost_surface_metadata.json").write_text(
+            json.dumps({"effective_config_sha256": value}), encoding="utf-8"
+        )
+
+    def test_newer_config_with_the_recorded_fingerprint_keeps_routes(self) -> None:
+        # A harmless edit (comment or metadata key) changes the file time only.
+        self.add_hotspots_and_routes()
+        from src.freshness import config_fingerprint
+        self.write_fingerprint(config_fingerprint(build_web.load_config(self.config)))
+        future = time.time() + 60
+        os.utime(self.config, (future, future))
+        manifest = self.build()
+        self.assertTrue(manifest["routes_available"], manifest["route_status"])
+
+    def test_a_different_fingerprint_marks_routes_stale(self) -> None:
+        self.add_hotspots_and_routes()
+        self.write_fingerprint("0" * 64)
+        manifest = self.build()
+        self.assertFalse(manifest["routes_available"])
+        self.assertIn("different", manifest["route_status"])
 
     def test_current_routes_are_published_with_scores(self) -> None:
         self.add_hotspots_and_routes()

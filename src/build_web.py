@@ -19,6 +19,7 @@ from pyproj import Transformer
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 from rasterio.warp import reproject, transform_bounds
+from src.freshness import stale_reasons
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -284,27 +285,31 @@ def route_inputs_present(
             + ", ".join(missing)
             + ". Run python -m src.routing.",
         )
-    resolution = int(load_config(config_path)["grid"]["resolution_m"])
+    config = load_config(config_path)
+    resolution = int(config["grid"]["resolution_m"])
     source_files = [
         hotspot_input,
         PROCESSED / f"cost_surface_{resolution}m.tif",
         PROCESSED / f"cost_class_mask_{resolution}m.tif",
-        config_path,
         ROOT / "src" / "routing.py",
     ]
-    missing_sources = [path.name for path in source_files if not path.exists()]
+    missing_sources = [path.name for path in source_files + [config_path] if not path.exists()]
     if missing_sources:
         return (
             False,
             "Route input files are missing: " + ", ".join(missing_sources) + ".",
         )
-    if min(path.stat().st_mtime for path in outputs) < max(
-        path.stat().st_mtime for path in source_files
-    ):
+    # The config counts by content when the cost surface records its
+    # fingerprint, so a harmless edit to costs.yaml no longer drops routes.
+    reasons = stale_reasons(
+        outputs, source_files, config_path, config,
+        [PROCESSED / "cost_surface_metadata.json"],
+    )
+    if reasons:
         return (
             False,
-            "Route files are older than the hotspot input, cost surface, or "
-            "cost configuration. Run python -m src.routing.",
+            "Route files are out of date (" + "; ".join(reasons) + "). "
+            "Run python -m src.routing.",
         )
     return True, "Source-to-storage routes and minimum spanning network are available."
 
