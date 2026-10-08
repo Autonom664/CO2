@@ -19,8 +19,12 @@ drives a route.
 | [data_preparation.md](data_preparation.md) | How the raw data was turned into the cost surface |
 | [arcgis_recipe.md](arcgis_recipe.md) | Rebuild this in ArcGIS Pro, tool by tool |
 | [experiments.md](experiments.md) | Things to try in the app, and what to look for |
-| [decisions.md](decisions.md) | Every design decision (D1–D18) with its reason |
+| [decisions.md](decisions.md) | Every design decision (D1–D25) with its reason |
 | [validation.md](validation.md) | How the model was checked against the real Baltic Pipe |
+| [history.md](history.md) | How the model evolved through five versions, and what each change did |
+| [references.md](references.md) | The literature behind every weight and method choice |
+| [faq.md](faq.md) | Common questions: sea detours, snapping, browser vs published routes |
+| [glossary.md](glossary.md) | Terms, with their ArcGIS Pro equivalents |
 
 ## Five things worth knowing first
 

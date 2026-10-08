@@ -126,6 +126,28 @@ passed. See `experiments.md` for how to test that.
 | Munitions finds (500 m) | 8 | survey and clearance needed |
 | Subsea pipelines / cables | 4 / 5 | each crossing needs a crossing design |
 
+## Where each number comes from
+
+| Weight | Evidence | Strength of evidence |
+|---|---|---|
+| Sea 2 | IPCC SRCCS ch. 4 (offshore 1.4–1.7×), JRC 2024 (offshore 2) | published |
+| Wetland 1, urban 1, population 0–1 | IEAGHG 2014 Table 19 (Kinder Morgan: marsh 2×, high population 2×) | published |
+| Major roads, railways 5 | Baltic Pipe permit: crossed by HDD; one crossing costs about 0.75 km of open land | derived from practice |
+| Minor roads 0.5, streams 1 | Baltic Pipe permit: open-cut | derived from practice |
+| Lakes 7 | avoided in practice | judgement |
+| Alongside lines ×0.9 | about ×0.91 (van den Broek via Knoope 2013, *unverified*) | secondary source |
+| Landfall 10 | stands in for a shore-approach HDD; no published value found | judgement |
+| CO₂ safety 0–5 within 1 km | hazard ranges over 1.5 km (Energies 2021), Satartia 2020, UK PD 8010-1 societal risk | the distance is evidenced; the weight is judgement |
+| Near buildings up to 6 within 200 m | near-field safety and working space | judgement |
+| Natura 2000 9, §3 8, fredskov 7, beach protection 7 | permit risk; protected status, not construction cost | judgement |
+| Drinking water 0–0.5 | crossed in practice; covers 87% of land (decision D14) | measured against Baltic Pipe |
+| Marine uses 4–8 | conflict with other sea uses; no published multipliers found | judgement |
+
+Weights marked *judgement* are the best candidates for sensitivity
+testing in a thesis. The sensitivity runs ([validation.md](validation.md))
+show which of them actually change the results. Full references are in
+[references.md](references.md).
+
 ## Questions worth asking about any weight
 
 1. **How much of the area does the layer cover?** A weight on a layer that

@@ -75,6 +75,20 @@ places.
 | **Network** | All 153 pairs of the 18 sites are routed. The minimum spanning tree picks the 17 links that join everything most cheaply |
 | **Snapping** | A site inside a building or barrier is moved to the nearest passable cell within 2 km |
 
+## Why this approach, and the alternatives
+
+| Choice | Why | Alternatives considered |
+|---|---|---|
+| **Least-cost path on a raster** | Standard for corridor studies: transparent, reproducible, and it reproduces in ArcGIS Pro. Every assumption is a visible weight | *Straight lines × detour factor*: fast, but says nothing about where. *Routing along existing roads or power lines only*: realistic in places, but misses greenfield routes. *Network optimisation (SimCCS)*: sizes pipes and trunk lines, but needs cost data in money and far more effort |
+| **Additive weights ("multiplier − 1")** | Matches published multipliers (Kinder Morgan, JRC) and Weißenburger's formula, so weights can be traced to literature | *AHP* (pairwise expert weighting): common in academic studies, but no CO₂ operator was found using it, and the weights are hard to trace to costs. *Multiplicative factors*: they explode where many layers overlap |
+| **Highest only within groups** | One piece of land charged once: a bog that is wetland, §3 and Natura 2000 is one obstacle | *Sum everything*: overlapping protection is charged two or three times. Try it with the "let overlapping layers add up" experiment |
+| **Barriers only where crossing is truly excluded** | Real projects drill under Natura 2000, roads and rivers; Baltic Pipe did | *Everything protected as a barrier*: long detours, and sometimes no route at all |
+| **8-connected moves, √2 diagonals** | The same as ArcGIS Cost Distance; avoids the staircase routes of 4-connected grids | *16-connected (knight's moves)*: smoother lines, slower, and not standard in ArcGIS |
+| **100 m grid** | Matches the population data (GHSL 100 m); 28 million cells is feasible | *50 m*: about 4× the cells and run time, without better input data. *250 m* (the browser): fast enough to recalculate interactively |
+| **Corridors at 1% and 3%** | Shows how certain a route is: a narrow corridor means one clear best path, a wide one means many near-equal options | *5%*: corridors up to 37,700 km², too wide to read |
+| **Minimum spanning tree for the network** | A simple, reproducible picture of which sites naturally connect | *Steiner trees, capacity-optimised trunk lines*: closer to real network design, out of scope |
+| **Validation against Baltic Pipe** | The only recent, well-documented transmission pipeline across Denmark | *Evida's planned CO₂ line from Aalborg to Purhus*: a better CO₂ match, once its route is published |
+
 ## What the model does **not** do
 
 - No money: weights are relative difficulty, not DKK.

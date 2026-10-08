@@ -22,3 +22,8 @@ Each entry gives the reason and the alternative that was rejected.
 | D16 | A separate **Model settings** panel with tabs and help | ArcGIS-like wording, everything in one place | settings in the layer sidebar, or a wizard |
 | D17 | Generic credit to "a master's thesis at KU" | no names or logo without permission | named credit |
 | D18 | **English** interface | academic presentation | Danish, or both |
+| D19–D20 | Publish the adjustable app when it passes its checks; one AI agent may stand in for the other if it stalls | keep the release moving without the lead relaying messages | waiting for manual prompts |
+| D21 | Code under the **MIT** licence | lets students and others reuse and adapt it | GPL (copyleft), no licence |
+| D22–D23 | The public repository leaves out internal coordination notes and uses a private author address | server details and work e-mail stay private | publishing everything |
+| D24 | Every checked revision goes **live immediately** | the app has one main user who tests each version | batched releases |
+| D25 | Source code at **github.com/Autonom664/CO2** | open and citable | private repository |

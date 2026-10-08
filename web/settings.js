@@ -378,7 +378,11 @@ const WIKI_PAGES = [
   ["arcgis_recipe.md", "Rebuild it in ArcGIS Pro"],
   ["experiments.md", "Experiments"],
   ["decisions.md", "Design decisions"],
-  ["validation.md", "Validation against Baltic Pipe"],
+  ["validation.md", "Validation and sensitivity"],
+  ["history.md", "How the model evolved (5 versions)"],
+  ["references.md", "References (literature)"],
+  ["faq.md", "Frequently asked questions"],
+  ["glossary.md", "Glossary with ArcGIS terms"],
 ];
 
 let markedModule = null;
