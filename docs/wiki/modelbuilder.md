@@ -275,10 +275,11 @@ site** per source.
 - input regions: `sites`
 - input cost raster: `cost_surface`
 - output: `network`
-- connections: **Generate minimum spanning tree**
 
-The output is the cheapest set of links joining all 18 sites, with no
-loops. Compare it with `published_network`.
+The tool always builds a minimum spanning tree, so there is no option to
+set. The output is the cheapest set of links joining all 18 sites, with no
+loops. The optional "neighbor paths" output also gives the links between
+every pair of nearby sites, which is useful for seeing alternatives. Compare it with `published_network`.
 
 ---
 
@@ -310,8 +311,12 @@ almost equally good options.
 1. A copy of Model 1 with **F_parallel = 1** (no discount). Otherwise the
    model would be rewarded for following the real pipeline, which is in
    the power-and-gas assets.
-2. Two points: the start and end of `baltic_pipe_osm` (**Feature Vertices
-   To Points**, Start and End).
+2. Two points: the start and end of `baltic_pipe_osm`.
+   - With an **Advanced** licence: **Feature Vertices To Points**, Start
+     and End.
+   - With any licence: **Generate Points Along Lines** on
+     `baltic_pipe_osm`, by percentage, 100%, with **"Include end points"**
+     ticked. Keep the first and the last point.
 3. **Distance Accumulation** from the start, then **Optimal Path As Line**
    to the end → `model_route`.
 4. **Generate Points Along Lines** on `baltic_pipe_osm`, every 100 m →
