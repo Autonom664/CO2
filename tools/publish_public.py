@@ -53,7 +53,8 @@ FORBIDDEN = [
     r"DATAFORDELER_API_KEY\s*=\s*['\"]?[A-Za-z0-9]{12,}",
     r"BEGIN (RSA|OPENSSH|EC) PRIVATE KEY",
 ]
-WORK_EMAIL = "mbi@dstchemicals.com"
+MARKER = ".co2-public-copy"  # written into every copy this script builds
+WORK_EMAIL = "mbi" + "@dstchemicals.com"
 
 
 def run(*args: str, cwd: Path | None = None, capture: bool = False) -> str:
@@ -80,6 +81,15 @@ def remove_tree(path: Path) -> None:
 
 def build_copy(out: Path, noreply: str, name: str) -> None:
     if out.exists():
+        # Only ever delete a copy this script made itself; anything else
+        # could be someone's work.
+        if not (out / MARKER).exists():
+            raise SystemExit(
+                f"Refusing to delete {out}: it was not created by this script "
+                f"(no {MARKER} file). Choose another --out or remove it yourself."
+            )
+        if out.resolve() in (ROOT.resolve(), *ROOT.resolve().parents):
+            raise SystemExit(f"Refusing to delete {out}: it contains this repository.")
         remove_tree(out)
     run("git", "clone", "--no-local", "--quiet", str(ROOT), str(out))
     with tempfile.TemporaryDirectory() as folder:
@@ -97,6 +107,7 @@ def build_copy(out: Path, noreply: str, name: str) -> None:
             "--replace-message", str(replacements),
         ]
         run(*command, cwd=out)
+    (out / MARKER).write_text("Built by tools/publish_public.py; safe to delete.\n", encoding="utf-8")
 
 
 def scan(out: Path) -> list[str]:

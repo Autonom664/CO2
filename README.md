@@ -7,6 +7,11 @@ assumption can be changed.**
 Built to support a master's thesis on CO₂ capture and transport at the
 University of Copenhagen (KU).
 
+> **Research and teaching tool, provided as is.** Not engineering,
+> permitting or investment advice. Weights are assumptions, and data may
+> be incomplete or outdated. **Back up your own projects before importing
+> anything from here.** See [DISCLAIMER.md](DISCLAIMER.md).
+
 **Live demo:** <https://co2.michaelbinger.dk/>
 
 ![The map with routes, a selected route's near-optimal corridor and the Model settings panel](docs/images/app.png)

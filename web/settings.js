@@ -123,6 +123,48 @@ function updateRunEstimate() {
     `network: ${e.sites} sites × ${round(e.seconds)} s. The map stays usable while it runs.`;
 }
 
+// ---- backup of the previous settings -----------------------------------
+
+const PREVIOUS_KEY = "co2-routing-scenario-previous";
+
+// Called before anything replaces the whole scenario (load, reset,
+// experiment), so the user can always go back one step.
+function backupCurrent(reason) {
+  try {
+    localStorage.setItem(PREVIOUS_KEY, JSON.stringify({
+      reason, savedAt: new Date().toISOString(), scenario: state.scenario,
+    }));
+  } catch {
+    // Storage blocked: no backup possible; the user can still save to a file.
+  }
+}
+
+function previousBackup() {
+  try {
+    return JSON.parse(localStorage.getItem(PREVIOUS_KEY) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function restorePrevious() {
+  const backup = previousBackup();
+  if (!backup) return;
+  const current = state.scenario;
+  const { scenario } = reconcile(backup.scenario, state.defaults);
+  state.scenario = scenario;
+  try {
+    // Swap, so Restore can be undone too.
+    localStorage.setItem(PREVIOUS_KEY, JSON.stringify({
+      reason: "before restoring", savedAt: new Date().toISOString(), scenario: current,
+    }));
+  } catch {
+    // Ignore: the restore itself worked.
+  }
+  changed({ rerender: true });
+  refreshSiteMarkers();
+}
+
 // ---- state changes ------------------------------------------------------
 
 function changed({ rerender = false } = {}) {
@@ -334,14 +376,25 @@ function scenariosTab() {
         JSON.stringify(state.scenario, null, 2), "application/json") }, "Save to file"),
       element("button", { type: "button", onclick: loadScenarioFile }, "Load file…"),
       element("button", { type: "button", class: "danger", onclick: () => {
-        if (!confirm("Reset every setting and site to the published model?")) return;
+        if (!confirm("Reset every setting and site to the published model?\n\n" +
+          "Your current settings are kept as a backup (Restore previous settings).")) return;
+        backupCurrent("before reset");
         state.scenario = structuredClone(state.defaults);
         changed({ rerender: true });
         refreshSiteMarkers();
       } }, "Reset to published")),
+    (() => {
+      const backup = previousBackup();
+      if (!backup) return null;
+      const when = new Date(backup.savedAt).toLocaleString();
+      return element("div", { class: "notice" },
+        `A backup of your previous settings exists (${backup.reason}, ${when}). `,
+        element("button", { type: "button", onclick: restorePrevious }, "Restore previous settings"));
+    })(),
     element("p", { class: "muted" },
-      "Your settings are kept in this browser automatically. Save to a file to keep a scenario, " +
-      "share it, or attach it to the thesis."),
+      "Your settings are kept in this browser automatically, and the previous settings are backed up " +
+      "before any load, reset or experiment. Browser storage can be cleared, so use Save to file for " +
+      "anything you want to keep, share or attach to the thesis."),
     element("h3", {}, changes.length ? `Changes from the published model (${changes.length})` : "No changes from the published model"),
     element("ul", { class: "change-list" }, ...changes.map((line) => element("li", {}, line))),
   ];
@@ -357,6 +410,12 @@ function helpTab() {
   return [
     element("p", {}, ABOUT_TEXT),
     element("button", { type: "button", onclick: () => showWelcome({ openLearn }) }, "Show the welcome guide again"),
+    element("h3", {}, "Disclaimer"),
+    element("p", {}, "A research and teaching tool, provided as is. Not engineering, permitting or investment " +
+      "advice: weights are assumptions and data may be incomplete or outdated. Check every layer against its " +
+      "official source before relying on it. Back up your own projects before importing anything from here. ",
+      element("a", { href: "https://github.com/Autonom664/CO2/blob/main/DISCLAIMER.md", target: "_blank", rel: "noopener" },
+        "Full disclaimer and backup checklist"), "."),
     element("h3", {}, "How the model works"),
     element("p", {}, WEIGHT_SCALE_HELP),
     element("p", {}, "The route between two sites is the path with the lowest total cost, like ArcGIS Cost Path. " +
@@ -449,6 +508,8 @@ function learnTab() {
     element("p", { class: "muted" }, experiment.question),
     element("details", {}, element("summary", {}, "What to look for"), element("p", {}, experiment.lookFor)),
     element("button", { type: "button", onclick: () => {
+      backupCurrent(`before the experiment "${experiment.title}"`);
+      state.scenario = structuredClone(state.scenario);
       experiment.apply(state.scenario);
       state.scenario.name = `Experiment: ${experiment.title}`;
       changed();
@@ -496,6 +557,7 @@ async function loadScenarioFile() {
     return;
   }
   const { scenario, notes } = reconcile(parsed, state.defaults);
+  backupCurrent(`before loading ${file.name}`);
   state.scenario = scenario;
   changed({ rerender: true });
   refreshSiteMarkers();

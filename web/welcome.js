@@ -48,7 +48,8 @@ export function showWelcome({ openLearn } = {}) {
         <button type="button" class="primary" data-action="close">Start exploring</button>
         <button type="button" data-action="learn">Show me the experiments</button>
       </div>
-      <p class="muted small">You can open this again from Model settings → Help.</p>`;
+      <p class="muted small">A research and teaching tool, not engineering or permitting advice; see
+        Model settings → Help for the disclaimer. You can open this guide again there.</p>`;
     dialog.addEventListener("click", (event) => {
       const action = event.target.dataset?.action;
       if (!action) return;
