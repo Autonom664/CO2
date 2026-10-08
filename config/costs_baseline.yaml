@@ -1,38 +1,41 @@
+# Initial subjective scoring assumptions; tune these before interpreting routes.
+# Values are relative cell costs, not monetary estimates.
 grid:
   crs: EPSG:25832
   resolution_m: 100
   cost_reference_resolution_m: 250
   combine_rule: additive
   nodata: -9999
+
 routing:
-  path_method: MCP_Geometric
-  fully_connected: true
-  snap_distance_metric: euclidean
   max_snap_distance_m: 2000
   offshore_corridor_half_width_m: 10000
+
 web:
   display_resolution_m: 100
   route_simplify_m: 25
+
 barriers:
-- building_barrier
-- protected_barrier
+  - building_barrier
+  - protected_barrier
+
 costs:
   open_land: 1
   open_sea: 2
-  drinking_water_osd: 0.5
-  drinking_water_od: 0
-  road_major: 5
-  road_minor: 0.5
+  drinking_water_osd: 4
+  drinking_water_od: 2
+  road_major: 4
+  road_minor: 2
   railway_crossing: 5
-  forest: 0.5
-  urban_area: 1
+  forest: 6
+  urban_area: 8
   building_barrier: 10
   natura2000: 9
   protected_nature: 8
-  watercourse_crossing: 1
+  watercourse_crossing: 4
   lake: 7
-  wetland: 1
-  groundwater_catchment: 0.5
+  wetland: 7
+  groundwater_catchment: 3
   ancient_monument_protection: 5
   water_protection: 5
   contaminated_v2: 6
@@ -51,27 +54,18 @@ costs:
     enabled: true
     max_distance_m: 200
     max_score: 6
-    distance_metric: euclidean
   population:
     enabled: true
-    reference_cell_resolution_m: 100
-    min_per_cell: 1.0
-    minimum: 0
-    maximum: 1
+    min_per_cell: 1.0  # people per 100 m source cell; scales with analysis-cell area
+    minimum: 1
+    maximum: 10
     quantiles: 100
-  landfall: 10
-  population_risk:
-    enabled: true
-    radius_m: 1000
-    kernel: circular
-    threshold_people: 50
-    maximum: 5
-    quantiles: 5
-    class_bit: population_risk
+
 rasterization:
-  extent_all_touched: false
+  # Linear features are burned into every touched cell to prevent diagonal gaps.
   linear_all_touched: true
   polygon_all_touched: false
+
 layers:
   roads_major:
     file: phase_a_infrastructure.gpkg
@@ -280,7 +274,7 @@ layers:
     file: phase_b.gpkg
     layer: fredskov
     cost: fredskov
-    class_bit: fredskov
+    class_bit: coastal_protection
     geometry: polygon
     surface: land
     optional: true
@@ -308,39 +302,28 @@ layers:
     cost: protected_nature
     class_bit: protected_reserves
     geometry: polygon
+
 combine_groups:
-  wet_nature:
-    members:
-    - wetland
-    - protected_nature
-    - natura2000
+  protected_areas:
+    members: [natura2000, protected_nature]
     rule: max
-  forest_group:
-    members:
-    - forest
-    - fredskov
-    rule: max
-  people:
-    members:
-    - urban_area
-    - population
-    - dwelling_proximity
-    - population_risk
-    rule: max
+
 discount_classes:
-- marine_cable_corridor
+  - marine_cable_corridor
+
 parallel_corridor:
   enabled: true
   inner_distance_m: 50
   outer_distance_m: 300
-  factor: 0.9
-  distance_metric: euclidean
+  factor: 0.8
+  # Add OSM way IDs here when running validation that must not reuse those ways.
   exclude_osm_ids: []
   assets:
-  - file: phase_a_infrastructure.gpkg
-    layer: power_lines
-  - file: phase_a_infrastructure.gpkg
-    layer: pipelines
+    - file: phase_a_infrastructure.gpkg
+      layer: power_lines
+    - file: phase_a_infrastructure.gpkg
+      layer: pipelines
+
 class_bits:
   open_land: 1
   open_sea: 2
@@ -374,74 +357,25 @@ class_bits:
   munitions: 536870912
   subsea_infrastructure: 1073741824
   coastal_protection: 2147483648
-  fredskov: 4294967296
-  population_risk: 8589934592
-  landfall: 17179869184
+
 route_classes:
-  natura2000:
-  - natura2000_habitats
-  - natura2000_birds
-  protected_nature:
-  - protected_nature_s3
-  - protected_reserves
-  road_major:
-  - road_major
-  road_minor:
-  - road_minor
-  forest:
-  - forest
-  dwelling_proximity:
-  - dwelling_proximity
-  parallel_corridor:
-  - parallel_corridor
-  drinking_water:
-  - drinking_water
-  groundwater_catchment:
-  - groundwater_catchments
-  ancient_monument_protection:
-  - ancient_monument_protection
-  water_protection:
-  - water_protection
-  contaminated_land:
-  - contaminated_land
-  marine_shipping:
-  - marine_shipping
-  marine_renewables:
-  - marine_renewables
-  marine_materials:
-  - marine_materials
-  marine_cable_corridor:
-  - marine_cable_corridor
-  offshore_wind:
-  - offshore_wind
-  munitions:
-  - munitions
-  subsea_infrastructure:
-  - subsea_infrastructure
-  coastal_protection:
-  - coastal_protection
-  urban_area:
-  - urban_area
-  wetland:
-  - wetland
-  fredskov:
-  - fredskov
-  landfall:
-  - landfall
-  population_risk:
-  - population_risk
-score_minimum: 0
-landfall:
-  enabled: true
-  cost: landfall
-  class_bit: landfall
-  connectivity: 8
-browser_model:
-  source_resolution_m: 100
-  resolution_m: 250
-  area_resampling: average
-  linear_resampling: max
-  area_presence_threshold: 0.5
-  building_share_scale: 255
-  building_barrier_share_threshold: 128
-  land_sea_tie_break: land
+  natura2000: [natura2000_habitats, natura2000_birds]
+  protected_nature: [protected_nature_s3, protected_reserves]
+  road_major: [road_major]
+  road_minor: [road_minor]
+  forest: [forest]
+  dwelling_proximity: [dwelling_proximity]
+  parallel_corridor: [parallel_corridor]
+  drinking_water: [drinking_water]
+  groundwater_catchment: [groundwater_catchments]
+  ancient_monument_protection: [ancient_monument_protection]
+  water_protection: [water_protection]
+  contaminated_land: [contaminated_land]
+  marine_shipping: [marine_shipping]
+  marine_renewables: [marine_renewables]
+  marine_materials: [marine_materials]
+  marine_cable_corridor: [marine_cable_corridor]
+  offshore_wind: [offshore_wind]
+  munitions: [munitions]
+  subsea_infrastructure: [subsea_infrastructure]
+  coastal_protection: [coastal_protection]
