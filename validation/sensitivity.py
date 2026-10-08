@@ -49,11 +49,15 @@ LOG = logging.getLogger("sensitivity")
 # Keys missing from the config are ignored, so the groups survive config edits.
 GROUPS: dict[str, list[str]] = {
     "sea": ["open_sea"],
+    "landfall": ["landfall"],
     "roads_rail": ["road_major", "road_minor", "railway_crossing"],
     "water": ["watercourse_crossing", "lake", "wetland", "water_protection"],
     "protected_nature": ["natura2000", "protected_nature"],
     "forest": ["forest", "fredskov"],
     "urban_population": ["urban_area", "population.maximum", "dwelling_proximity.max_score"],
+    # Separate from urban_population: it is the main remaining difference from
+    # the as-built Baltic Pipe (method.md, Recalibration).
+    "population_risk": ["population_risk.maximum"],
     "groundwater": ["drinking_water_osd", "drinking_water_od", "groundwater_catchment"],
     "heritage_soil_coast": [
         "ancient_monument_protection", "contaminated_v1", "contaminated_v2", "beach_protection",
@@ -63,7 +67,8 @@ GROUPS: dict[str, list[str]] = {
         "offshore_wind_planned", "munitions_points", "subsea_pipelines", "subsea_cables",
     ],
 }
-SCORE_RANGE = (0.5, 15.0)
+# Scores of 0 stay 0 when scaled (P12 allows 0 = no extra cost).
+SCORE_RANGE = (0.0, 15.0)
 
 
 def perturb(config: dict[str, Any], keys: list[str], factor: float) -> tuple[dict[str, Any], list[str]]:
@@ -97,21 +102,32 @@ def perturb(config: dict[str, Any], keys: list[str], factor: float) -> tuple[dic
 def relaxed_score_validation() -> Iterator[None]:
     original = cost_surface.validate_cost_scores
 
-    def validate(costs: dict[str, Any], layers: dict[str, Any], barriers: list[str]) -> None:
+    def validate(
+        costs: dict[str, Any], layers: dict[str, Any], barriers: list[str],
+        minimum_score: float = 1, *args: Any, **kwargs: Any,
+    ) -> None:
         low, high = SCORE_RANGE
         scaled = copy.deepcopy(costs)
         for name, value in scaled.items():
             if isinstance(value, (int, float)):
                 if not low <= float(value) <= high:
                     raise ValueError(f"Sensitivity score for {name!r} outside {SCORE_RANGE}")
-                scaled[name] = min(max(float(value), 1.0), 10.0)
+                scaled[name] = min(max(float(value), minimum_score), 10.0)
         population = scaled.get("population")
         if isinstance(population, dict):
             population = dict(population)
-            population["minimum"] = min(max(float(population["minimum"]), 1.0), 10.0)
+            population["minimum"] = min(max(float(population["minimum"]), minimum_score), 10.0)
             population["maximum"] = min(max(float(population["maximum"]), population["minimum"]), 10.0)
             scaled["population"] = population
-        original(scaled, layers, barriers)
+        for name, value in scaled.items():
+            # Other range-scored dicts (population_risk, dwelling_proximity).
+            if name != "population" and isinstance(value, dict):
+                for key in ("maximum", "max_score"):
+                    if isinstance(value.get(key), (int, float)):
+                        if not low <= float(value[key]) <= high:
+                            raise ValueError(f"Sensitivity score for {name}.{key} outside {SCORE_RANGE}")
+                        scaled[name] = {**value, key: min(float(value[key]), 10.0)}
+        original(scaled, layers, barriers, minimum_score, *args, **kwargs)
 
     cost_surface.validate_cost_scores = validate
     try:
@@ -216,7 +232,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--groups", default=",".join(GROUPS))
     parser.add_argument("--factors", default="0.5,1.5")
-    parser.add_argument("--parallel-factors", default="1.0,0.6",
+    parser.add_argument("--parallel-factors", default="1.0,0.8",
                         help="Extra scenarios for parallel_corridor.factor (empty to skip)")
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()

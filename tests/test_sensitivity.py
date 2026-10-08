@@ -34,10 +34,21 @@ class PerturbTests(unittest.TestCase):
 
     def test_clips_to_range_and_keeps_population_ordered(self) -> None:
         new, _ = sensitivity.perturb(CONFIG, ["population.maximum", "open_land"], 0.1)
-        self.assertEqual(new["costs"]["open_land"], sensitivity.SCORE_RANGE[0])
+        self.assertAlmostEqual(new["costs"]["open_land"], 0.1)
         self.assertLessEqual(
             new["costs"]["population"]["minimum"], new["costs"]["population"]["maximum"]
         )
+        high, _ = sensitivity.perturb(CONFIG, ["urban_area"], 3)
+        self.assertEqual(high["costs"]["urban_area"], sensitivity.SCORE_RANGE[1])
+
+    def test_zero_scores_stay_zero(self) -> None:
+        config = {"costs": {"drinking_water_od": 0, "population_risk": {"maximum": 5}}}
+        new, changed = sensitivity.perturb(
+            config, ["drinking_water_od", "population_risk.maximum"], 1.5
+        )
+        self.assertEqual(new["costs"]["drinking_water_od"], 0)
+        self.assertEqual(new["costs"]["population_risk"]["maximum"], 7.5)
+        self.assertEqual(changed, ["drinking_water_od", "population_risk.maximum"])
 
 
 class RelaxedValidationTests(unittest.TestCase):
@@ -49,6 +60,11 @@ class RelaxedValidationTests(unittest.TestCase):
             cost_surface.validate_cost_scores(costs, layers, ["building_barrier"])
         with sensitivity.relaxed_score_validation():
             cost_surface.validate_cost_scores(costs, layers, ["building_barrier"])
+            # The P12 signature passes minimum_score; 0 scores must be accepted.
+            costs["urban_area"] = 0
+            cost_surface.validate_cost_scores(
+                costs, layers, ["building_barrier"], minimum_score=0
+            )
             costs["urban_area"] = 40
             with self.assertRaises(ValueError):
                 cost_surface.validate_cost_scores(costs, layers, ["building_barrier"])
