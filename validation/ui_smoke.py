@@ -79,6 +79,15 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
               f"{sizes['tiles']} tiles, largest {sizes['largest']} px, limit {sizes['limit']}")
         badges = page.locator(".score-badge").count()
         check(badges >= 10, "score badges on layer toggles", f"{badges}")
+        # Classes added by the recalibration (D12/D14).
+        new_classes = {}
+        for class_id in ("fredskov", "landfall", "population_risk"):
+            row = page.locator(f'#input-layers [data-layer-id="{class_id}"]')
+            new_classes[class_id] = (
+                row.locator(".score-badge").text_content() if row.count() else None
+            )
+        check(all(new_classes.values()), "recalibration layers have toggles and scores",
+              ", ".join(f"{k}={v}" for k, v in new_classes.items()))
 
         if page.evaluate("!!window.co2Map.getLayer('storage-areas-fill')"):
             areas = page.evaluate(
