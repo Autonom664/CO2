@@ -42,7 +42,12 @@ Acquisition date below is the date recorded by the download run. The raw files a
 | DEA CO2 storage area: Inez | Danish Energy Agency (Energistyrelsen) | <https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/inez_subsurface_designation/FeatureServer/0> | No licence stated; attribution: Danish Energy Agency (Energistyrelsen), CO2 storage licensing map | EPSG:4326 (processed from the source layer) | 2026-10-08 |
 | DEA CO2 storage area: Lisa | Danish Energy Agency (Energistyrelsen) | <https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/Lisa_subsurface_designation/FeatureServer/0> | No licence stated; attribution: Danish Energy Agency (Energistyrelsen), CO2 storage licensing map | EPSG:4326 (processed from the source layer) | 2026-10-08 |
 | DEA CO2 storage area: Jammerbugt | Danish Energy Agency (Energistyrelsen) | <https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/Jammerbugt_subsurface_designation/FeatureServer/0> | No licence stated; attribution: Danish Energy Agency (Energistyrelsen), CO2 storage licensing map | EPSG:4326 (processed from the source layer) | 2026-10-08 |
-| OpenStreetMap standard tiles (planned web basemap) | OpenStreetMap contributors | <https://tile.openstreetmap.org/{z}/{x}/{y}.png> | OSM tile policy; visible attribution, caching, no bulk download | EPSG:3857 | Not downloaded (runtime tiles) |
+| OpenStreetMap standard tiles (web basemap) | OpenStreetMap contributors | <https://tile.openstreetmap.org/{z}/{x}/{y}.png> | OSM tile policy; visible attribution, caching, no bulk download | EPSG:3857 | Not downloaded (runtime tiles) |
+
+Attribute OSM-derived layers shown in the map as “© OpenStreetMap contributors”
+and link to <https://www.openstreetmap.org/copyright>. The map displays this
+attribution. OpenStreetMap-derived source databases are licensed under ODbL 1.0;
+review its terms before extracting or redistributing those databases.
 
 OSM roads and forest are extracted from Geofabrik's GeoPackage export. The phase-A power-line and gas-pipeline corridors are extracted from the PBF lines layer; power lines are limited to tagged `power=line` ways with voltage of at least 132 kV, and pipelines to `man_made=pipeline` ways tagged `substance=gas`.
 

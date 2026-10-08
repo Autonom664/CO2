@@ -16,14 +16,18 @@ python -m src.routing
 python -m src.corridors
 python -m src.build_web
 python -m src.export_model
+python -m src.export_arcgis
 python -m validation.model_parity
 python -m validation.check_outputs
+python -m validation.check_starter_kit
 ```
 
-Both the model-pack parity command and the output validation command must pass
+The model-pack parity, output validation, and starter-kit checks must pass
 before deployment. `src.export_model` writes the 250 m browser inputs to
 `web/data/model/`; it does not replace the 100 m published cost surface or
-routes. Optionally run
+routes. `src.export_arcgis` creates the optional ArcGIS download under
+`web/downloads/`; run it before deploying if the site should offer the kit.
+Optionally run
 `validation/ui_smoke.py` against the local site; it requires Playwright.
 
 Compose binds the site to `127.0.0.1:18080` by default. Override

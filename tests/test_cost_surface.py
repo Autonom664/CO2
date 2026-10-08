@@ -27,6 +27,7 @@ from src.cost_surface import (
     validate_cost_scores,
 )
 import src.cost_surface as cost_surface
+from src.freshness import config_fingerprint
 
 
 class CostScoreTests(unittest.TestCase):
@@ -488,6 +489,10 @@ class PhaseACostModelTests(unittest.TestCase):
             self.assertEqual(
                 Path(metadata["class_mask_raster"]).as_posix(),
                 "processed/validation/cost_class_mask_100m.tif",
+            )
+            self.assertEqual(
+                metadata["effective_config_sha256"],
+                config_fingerprint(load_config(config_path)),
             )
 
             with rasterio.open(cost_path) as cost_raster:

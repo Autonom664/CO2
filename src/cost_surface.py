@@ -23,6 +23,8 @@ from rasterio.transform import from_origin
 from rasterio.warp import Resampling, reproject
 from shapely.geometry.base import BaseGeometry
 
+from src.freshness import config_fingerprint
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PROCESSED = ROOT / "data" / "processed"
@@ -1185,6 +1187,7 @@ def build_cost_surface(
         "population_risk_summary": population_risk_summary,
         "statistics_csv": path_for_metadata(stats_path),
         "class_mask_raster": path_for_metadata(class_output_path),
+        "effective_config_sha256": config_fingerprint(config),
     }
     if exclude_osm_ids:
         metadata["excluded_parallel_asset_osm_ids"] = sorted(
