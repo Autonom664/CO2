@@ -47,10 +47,42 @@ Its as-built route comes from OpenStreetMap (10 ways, 299.6 km).
 
 ## Sensitivity
 
-Every group of weights was varied by −50% and +50%, plus extra runs for
-the "alongside lines" discount. For each change, the test records:
-- how many sources change their best storage site
-- how much of each route stays within 1 km of its baseline
+Every group of weights was multiplied by 0.5 and by 1.5 (24 runs of the
+full 100 m model, about 2.5 hours). For each run, two things were
+compared with the published model:
+- whether each source's **best storage site** changed
+- how much of each **route** stays within 1 km of the published one
 
-The report is in `build/sensitivity/report.md`, and its summary will be
-added here.
+| Group changed | Best storage changed (×0.5 / ×1.5) | Route within 1 km (×0.5 / ×1.5) |
+|---|---|---|
+| **Sea base cost** | 1 / 0 of 8 | **80% / 57%** |
+| **CO₂ safety (people within 1 km)** | 0 / 0 | **63% / 89%** |
+| Water (streams, lakes, wetlands, protection lines) | 0 / 0 | 100% / 76% |
+| Protected nature (Natura 2000, §3) | 1 / 0 | 77% / 98% |
+| Forest and fredskov | 0 / 0 | 87% / 100% |
+| Urban, population, near buildings | 0 / 0 | 92% / 100% |
+| Groundwater and drinking water | 0 / 0 | 100% / 92% |
+| Marine uses | 0 / 0 | 100% / 95% |
+| Landfall | 0 / 0 | 98% / 100% |
+| Roads and railways | 0 / 0 | 100% / 100% |
+| Heritage, soil and coast | 0 / 0 | 98% / 100% |
+| Alongside-lines discount (×1.0 = off / ×0.8) | 0 / 0 | 98% / 91% |
+
+**What it means:**
+- **The choice of storage site is robust.** No change of ±50% to any
+  group moved more than one of the eight sources to a different storage
+  site. Conclusions such as "Aalborg Portland → Gassum" don't hinge on a
+  single weight.
+- **The exact route depends mainly on two choices:** how expensive sea is
+  compared with land, and how strongly the model keeps away from people.
+  With the sea 50% more expensive, routes overlap the published ones by
+  only 57%. Halving the CO₂ safety term gives 63%. These are the
+  assumptions to justify most carefully in a thesis, and good candidates
+  for scenarios.
+- **Roads, railways, heritage and marine uses barely matter at these
+  weights.** That doesn't make them unimportant; it means their crossings
+  are rarely avoidable or rarely on the way.
+
+The full table, with route-level detail per source, comes from
+`validation/sensitivity.py`. You can repeat any row in the app: Model
+settings → change the group's weights by the same factor → Run.
