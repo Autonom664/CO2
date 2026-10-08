@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import re
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -68,9 +70,17 @@ def filter_repo_command() -> list[str]:
     return [sys.executable, "-m", "git_filter_repo"]
 
 
+def remove_tree(path: Path) -> None:
+    """rmtree that also removes git's read-only object files on Windows."""
+    def make_writable(function, target, _):
+        os.chmod(target, stat.S_IWRITE)
+        function(target)
+    shutil.rmtree(path, onexc=make_writable)
+
+
 def build_copy(out: Path, noreply: str, name: str) -> None:
     if out.exists():
-        shutil.rmtree(out)
+        remove_tree(out)
     run("git", "clone", "--no-local", "--quiet", str(ROOT), str(out))
     with tempfile.TemporaryDirectory() as folder:
         mailmap = Path(folder) / "mailmap"
