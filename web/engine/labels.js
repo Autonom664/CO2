@@ -222,7 +222,7 @@ export const PARAMETERS = {
     ref: "≈ ×0.91 in the literature",
   },
   dwelling_proximity: {
-    group: "people", label: "Near buildings (up to 200 m)",
+    group: "people", label: "Near buildings",
     help: "Extra cost close to buildings, falling linearly to 0 at the distance set.",
   },
   population: {

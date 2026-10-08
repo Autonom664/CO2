@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="app.css">
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" defer></script>
     <script src="app.js" defer></script>
+    <script type="module" src="settings.js"></script>
   </head>
   <body>
     <header class="topbar">
@@ -18,6 +19,7 @@
       </div>
       <div class="header-actions">
         <button id="panel-toggle" type="button" aria-expanded="true" aria-controls="sidebar">Layers</button>
+        <button id="settings-toggle" type="button" class="primary" aria-expanded="false" aria-controls="settings-panel">Model settings</button>
       </div>
     </header>
     <main class="workspace">

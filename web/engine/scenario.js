@@ -19,9 +19,11 @@ export function defaultScenario(config, hotspots = []) {
   const layers = {};
   for (const [name, layer] of Object.entries(config.layers || {})) {
     const key = layer.cost;
+    // Barrier layers have no configured weight; 10 is the starting weight
+    // if the user switches one to "Cost".
     layers[name] = {
       treatment: barriers.has(key) ? "barrier" : "cost",
-      weight: numeric(costs[key], 0),
+      weight: numeric(costs[key], barriers.has(key) ? 10 : 0),
     };
   }
   const groups = {};

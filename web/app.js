@@ -582,6 +582,7 @@ async function startMap() {
   });
   map.co2Bounds = manifest.bounds;
   window.co2Map = map; // Handle for debugging and validation/ui_smoke.py.
+  window.dispatchEvent(new Event("co2map-ready")); // settings.js attaches here.
   map.addControl(new maplibregl.NavigationControl(), "top-right");
   map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
   map.once("load", () => {
