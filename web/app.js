@@ -6,6 +6,7 @@ const loadingElement = document.getElementById("map-loading");
 const sidebar = document.getElementById("sidebar");
 let assetVersion = "";
 let selectedRouteKey = "";
+let activePopup = null;
 const routeLayerIds = {
   routes: "pair-routes",
   minimum_spanning_network: "mst-network",
@@ -271,7 +272,9 @@ function addRoutePopup(map, event) {
       rows += `<p><a href="${escapeHtml(properties.project_source_url)}" target="_blank" rel="noopener noreferrer">Project source</a></p>`;
     }
   }
-  new maplibregl.Popup({ maxWidth: "340px" })
+  // Only one popup at a time: opening a new one closes the previous.
+  if (activePopup) activePopup.remove();
+  activePopup = new maplibregl.Popup({ maxWidth: "340px" })
     .setLngLat(event.lngLat)
     .setHTML(`<h3 class="popup-title">${escapeHtml(routeName)}</h3>${rows}`)
     .addTo(map);

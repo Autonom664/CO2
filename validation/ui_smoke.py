@@ -113,6 +113,15 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
                 )
                 check(corridor > 0, "selected route's corridor is drawn", f"{corridor}")
 
+            for index in (1, 2):
+                page.locator(".route-row").nth(index).click()
+                page.wait_for_timeout(700)
+            popups = page.locator(".maplibregl-popup").count()
+            check(popups == 1, "only one popup open after selecting three routes",
+                  f"{popups}")
+            page.locator(".route-row").first.click()
+            page.wait_for_timeout(700)
+
             selected_link = page.url
             values = page.locator("#route-filter option").evaluate_all(
                 "options => options.map(o => o.value).filter(Boolean)"
