@@ -418,6 +418,23 @@ async function openWikiPage(file, title) {
   }
 }
 
+// The download link appears only once the kit is published on the site.
+function starterKitParagraph() {
+  const paragraph = element("p", {}, "Rebuild the model yourself in ModelBuilder: see the step-by-step guide above. " +
+    "The ArcGIS starter kit (every layer as an aligned 100 m raster, the sites and published results in a " +
+    "File Geodatabase, and the weights table) will be downloadable here.");
+  const url = "downloads/co2_arcgis_starter_kit.zip";
+  fetch(url, { method: "HEAD", cache: "no-cache" }).then((response) => {
+    if (!response.ok) return;
+    const size = Number(response.headers.get("content-length")) || 0;
+    paragraph.replaceChildren("Rebuild the model yourself in ModelBuilder with the starter kit: every layer as an " +
+      "aligned 100 m raster, the sites and published results in a File Geodatabase, and the weights table. ",
+      element("a", { href: url, download: "" }, `Download the ArcGIS starter kit${size ? ` (${Math.round(size / 1e6)} MB)` : ""}`),
+      ". Then follow the ModelBuilder guide above.");
+  }).catch(() => {});
+  return paragraph;
+}
+
 function learnTab() {
   const experiments = EXPERIMENTS.map((experiment) => element("div", { class: "experiment" },
     element("strong", {}, experiment.title),
@@ -438,10 +455,7 @@ function learnTab() {
     element("ul", { class: "wiki-links" }, ...WIKI_PAGES.map(([file, title]) => element("li", {},
       element("a", { href: `wiki/${file}`, onclick: (event) => { event.preventDefault(); openWikiPage(file, title); } }, title)))),
     element("h3", {}, "ArcGIS Pro"),
-    element("p", {}, "Rebuild the model in ModelBuilder with the starter kit: every layer as an aligned 100 m raster, " +
-      "the sites and published results in a File Geodatabase, and the weights table. ",
-      element("a", { href: "downloads/co2_arcgis_starter_kit.zip", download: "" }, "Download the ArcGIS starter kit (zip)"),
-      ". Then follow the ModelBuilder guide above."),
+    starterKitParagraph(),
     element("h3", {}, "Try this"),
     ...experiments,
   ];
