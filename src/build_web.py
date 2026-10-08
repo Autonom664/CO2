@@ -42,15 +42,18 @@ LAYER_PRESENTATION = {
     "protected_nature_s3": ("Protected nature (§3)", "#6d994d", "Protected areas"),
     "protected_reserves": ("Protected reserves", "#a162a8", "Protected areas"),
     "forest": ("Forest", "#2f7d4a", "Land use"),
+    "fredskov": ("Protected forest (fredskov)", "#1b5e20", "Land use"),
     "population": ("Population density", "#d84141", "Population"),
     "dwelling_proximity": ("Within 200 m of buildings", "#c2185b", "Population"),
+    "population_risk": ("CO2 safety: people within 1 km", "#ad1457", "Population"),
     "parallel_corridor": ("Alongside existing infrastructure", "#00897b", "Infrastructure"),
     "drinking_water": ("Drinking-water areas (OSD, OD)", "#4fc3f7", "Groundwater"),
     "groundwater_catchments": ("Groundwater abstraction catchments", "#9bd8f2", "Groundwater"),
     "water_protection": ("Lake and stream protection lines", "#0277bd", "Water"),
     "contaminated_land": ("Contaminated land (V1, V2)", "#8d6e63", "Land use"),
     "ancient_monument_protection": ("Ancient-monument protection zones", "#b08968", "Heritage and coast"),
-    "coastal_protection": ("Beach protection and fredskov", "#9ccc65", "Heritage and coast"),
+    "coastal_protection": ("Beach protection", "#9ccc65", "Heritage and coast"),
+    "landfall": ("Landfall (shore crossing)", "#ffb300", "Heritage and coast"),
     "protected_barrier": ("Barriers: wells (BNBO), monuments, wind farms, munitions", "#3e2723", "Heritage and coast"),
     "marine_shipping": ("Shipping zones", "#5c6bc0", "Marine"),
     "marine_renewables": ("Renewable-energy zones", "#26a69a", "Marine"),
@@ -88,7 +91,7 @@ def class_score_label(config: dict[str, Any], class_name: str) -> str:
     if isinstance(score, dict):
         if "max_score" in score:
             return f"0–{score['max_score']:g}"
-        return f"{score.get('minimum', '?')}–{score.get('maximum', '?')}"
+        return f"{score.get('minimum', 0):g}–{score.get('maximum', '?')}"
     # Several source layers may share one class bit with different scores
     # (for example OSD 4 and OD 2), so show the range.
     scores = sorted({costs[k] for k in keys if isinstance(costs.get(k), (int, float))})

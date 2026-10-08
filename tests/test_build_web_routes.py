@@ -60,12 +60,12 @@ def write_rasters(processed: Path) -> None:
         **(profile | {"dtype": "float32", "nodata": -9999}),
     ) as dataset:
         dataset.write(np.ones((10, 20), dtype=np.float32), 1)
-    classes = np.full((10, 20), CLASS_BITS["open_land"], dtype=np.uint32)
+    classes = np.full((10, 20), CLASS_BITS["open_land"], dtype=np.uint64)
     classes[:, 10:] = CLASS_BITS["open_sea"]
     with rasterio.open(
         processed / "cost_class_mask_100m.tif",
         "w",
-        **(profile | {"dtype": "uint32", "nodata": 0}),
+        **(profile | {"dtype": "uint64", "nodata": 0}),
     ) as dataset:
         dataset.write(classes, 1)
         dataset.update_tags(class_bits=json.dumps(CLASS_BITS))

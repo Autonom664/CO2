@@ -22,7 +22,7 @@ class BuildWebTests(unittest.TestCase):
             for index, name in enumerate(build_web.LAYER_PRESENTATION)
         }
         # P12 adds classes above bit 31, so the mask is uint64.
-        class_bits["road_major"] = 1 << 34
+        class_bits["road_major"] = 1 << 40
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             processed = root / "processed"
