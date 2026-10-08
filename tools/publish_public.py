@@ -7,6 +7,8 @@ internal coordination files. The public copy:
 - rewrites the author e-mail to a GitHub noreply address (D23)
 - rewords commit messages that name internal hosts
 - is scanned afterwards; publishing stops if anything internal is left
+- has its test suite run in isolation (--test-python); publishing stops on
+  any failure, e.g. a committed test that needs an uncommitted file
 
     python tools/publish_public.py --noreply 12345+user@users.noreply.github.com
     python tools/publish_public.py --noreply ... --remote git@github.com:user/repo.git --push
@@ -135,6 +137,11 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=ROOT.parent / f"{ROOT.name}-public")
     parser.add_argument("--remote", help="GitHub remote URL to push to")
     parser.add_argument("--push", action="store_true", help="push after a clean scan")
+    parser.add_argument(
+        "--test-python", type=Path,
+        help="Python with the project's dependencies; runs the test suite inside the "
+             "public copy and refuses to push on failure (required with --push)",
+    )
     args = parser.parse_args()
 
     status = run("git", "status", "--porcelain", "--untracked-files=no", cwd=ROOT, capture=True)
@@ -150,9 +157,26 @@ def main() -> int:
             print("  -", problem)
         return 1
     print(f"Clean: {commits} commits, no internal files, hosts, addresses or secrets found.")
+    if args.test_python:
+        # Run the tests exactly as someone who clones the public repo would.
+        result = subprocess.run(
+            [str(args.test_python), "-B", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
+            cwd=args.out, text=True, encoding="utf-8", errors="replace", capture_output=True,
+        )
+        summary = [line for line in result.stderr.splitlines() if line.startswith(("Ran ", "OK", "FAILED"))]
+        print("Tests in the public copy: " + " | ".join(summary))
+        if result.returncode != 0:
+            failing = [line for line in result.stderr.splitlines() if line.startswith(("ERROR:", "FAIL:"))]
+            print("STOP: tests fail in the public copy (often a committed file needs an uncommitted one):")
+            for line in failing[:10]:
+                print("  -", line)
+            return 1
     if args.push:
         if not args.remote:
             print("--push needs --remote")
+            return 1
+        if not args.test_python:
+            print("--push needs --test-python, so the public copy is tested before it is published")
             return 1
         run("git", "remote", "add", "origin", args.remote, cwd=args.out)
         run("git", "push", "-u", "origin", "HEAD:main", cwd=args.out)
