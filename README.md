@@ -105,10 +105,10 @@ python -m src.cost_surface --exclude-osm-ids-from validation/baltic_pipe_osm.geo
 
 Least-cost routing will use
 `skimage.graph.MCP_Geometric`: one cost-distance run per emitter/hub, with
-traceback to each storage candidate. The 8-by-4 source-to-storage matrix
-contains 56 directed candidate routes (eight sources × seven storage
-candidates). A minimum spanning tree connects all 15 hotspots using the
-costs of all 105 hotspot pairs.
+traceback to each storage candidate. The 8-by-10 source-to-storage matrix
+contains 80 directed candidate routes (eight sources × ten storage
+candidates). A minimum spanning tree connects all 18 hotspots using the
+costs of all 153 hotspot pairs.
 
 With the candidate hotspot input in place, run:
 
@@ -117,7 +117,7 @@ python -m src.routing
 python -m src.build_web
 ```
 
-The router validates 15 unique hotspots with `id,name,lon,lat,role` columns,
+The router validates 18 unique hotspots with `id,name,lon,lat,role` columns,
 snaps points only to traversable cells within the configured maximum, computes
 the source-to-storage routes, and writes the minimum-spanning network and
 route-class lengths. Existing untyped hotspot CSVs retain the all-pairs mode.

@@ -42,6 +42,7 @@ from shapely.geometry import (
     MultiPolygon,
     Point,
     Polygon,
+    mapping,
 )
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points
@@ -87,6 +88,98 @@ EEA_LAYER_NAMES = {
     0: "natura2000_habitats_dk.geojson",
     1: "natura2000_birds_dk.geojson",
 }
+DEA_STORAGE_AREAS: tuple[dict[str, str], ...] = (
+    {
+        "hotspot_id": "greenstore_gassum",
+        "name": "Gassum",
+        "kind": "licence",
+        "holder": "Harbour Energy (40%); INEOS (40%); Nordsøfonden (20%)",
+        "licence": "C2024/01",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/C2024_01/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "havnsø_exploration",
+        "name": "Havnsø",
+        "kind": "licence",
+        "holder": "Equinor; Ørsted (20%); Nordsøfonden (20%)",
+        "licence": "C2024/03",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/C2024_03/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "roedby_exploration",
+        "name": "Rødby",
+        "kind": "licence",
+        "holder": "CarbonCuts; Nordsøfonden (20%)",
+        "licence": "C2024/02",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/C2024_02/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "stenlille",
+        "name": "Stenlille",
+        "kind": "designation",
+        "holder": "",
+        "licence": "",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/Stenlille_UU/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "thorning",
+        "name": "Thorning",
+        "kind": "designation",
+        "holder": "",
+        "licence": "",
+        "url": "https://www.arcgis.com/sharing/rest/content/items/0590b16f4105478ab34dbd136e0b25e2/data",
+        "format": "kmz",
+    },
+    {
+        "hotspot_id": "greensand_nini_west",
+        "name": "Nini West",
+        "kind": "permit",
+        "holder": "INEOS (40%); Harbour Energy (40%); Nordsøfonden (20%)",
+        "licence": "Nini West storage permit",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/Nini_West_storage_permit/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "bifrost_harald",
+        "name": "Bifrost",
+        "kind": "licence",
+        "holder": "TotalEnergies (80%); Nordsøfonden (20%)",
+        "licence": "C2023/02",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/TotalEnergiesED50UTM32/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "inez",
+        "name": "Inez",
+        "kind": "licence",
+        "holder": "TotalEnergies Carbon Neutrality DK (65%); Mitsui CCS DK (15%); Nordsøfonden (20%)",
+        "licence": "C2026/01",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/inez_subsurface_designation/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "lisa",
+        "name": "Lisa",
+        "kind": "designation",
+        "holder": "",
+        "licence": "",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/Lisa_subsurface_designation/FeatureServer/0",
+        "format": "geojson",
+    },
+    {
+        "hotspot_id": "jammerbugt",
+        "name": "Jammerbugt",
+        "kind": "designation",
+        "holder": "",
+        "licence": "",
+        "url": "https://services3.arcgis.com/VfNcCOxfWppwD8Xh/arcgis/rest/services/Jammerbugt_subsurface_designation/FeatureServer/0",
+        "format": "geojson",
+    },
+)
 DATAFORDELER_WFS_KEY = "DATAFORDELER_API_KEY"
 WFS_PAGE_SIZE = 2_000
 WFS_SOURCES: dict[str, dict[str, Any]] = {
@@ -379,6 +472,211 @@ def download_eea_layer(
         "bytes": destination.stat().st_size,
         "sha256": sha256_file(destination),
     }
+
+
+def download_dea_storage_area(
+    source: dict[str, str],
+    destination: Path,
+    force: bool,
+    previous: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if destination.exists() and not force:
+        LOG.info("Already downloaded: %s", destination)
+        if previous is not None:
+            return previous
+
+    features: list[dict[str, Any]] = []
+    offset = 0
+    page_size = 1_000
+    while True:
+        query = urllib.parse.urlencode(
+            {
+                "where": "1=1",
+                "outFields": "*",
+                "returnGeometry": "true",
+                "outSR": "4326",
+                "f": "geojson",
+                "resultOffset": str(offset),
+                "resultRecordCount": str(page_size),
+            }
+        )
+        request = urllib.request.Request(
+            f"{source['url']}/query?{query}", headers={"User-Agent": USER_AGENT}
+        )
+        with urllib.request.urlopen(request, timeout=120) as response:
+            page = json.load(response)
+        if "error" in page:
+            raise RuntimeError(
+                f"DEA storage-area query failed for {source['hotspot_id']}: "
+                f"{page['error']}"
+            )
+        page_features = page.get("features")
+        if not isinstance(page_features, list):
+            raise ValueError(
+                "DEA storage-area service returned no GeoJSON features array: "
+                f"{source['url']}"
+            )
+        features.extend(page_features)
+        if not page.get("exceededTransferLimit") and len(page_features) < page_size:
+            break
+        if not page_features:
+            raise ValueError(
+                f"DEA storage-area paging made no progress: {source['url']}"
+            )
+        offset += len(page_features)
+
+    if not features:
+        raise ValueError(
+            f"DEA storage-area service returned no features: {source['url']}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+        "features": features,
+    }
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(destination)
+    return {
+        "url": source["url"],
+        "path": str(destination.relative_to(ROOT)),
+        "download_date": datetime.now(UTC).date().isoformat(),
+        "feature_count": len(features),
+        "bytes": destination.stat().st_size,
+        "sha256": sha256_file(destination),
+    }
+
+
+def kml_polygon_geometries(kmz_path: Path) -> list[Polygon]:
+    with zipfile.ZipFile(kmz_path) as archive:
+        kml_names = [name for name in archive.namelist() if name.casefold().endswith(".kml")]
+        if not kml_names:
+            raise ValueError(f"DEA KMZ has no KML document: {kmz_path}")
+        root = ET.fromstring(archive.read(kml_names[0]))
+
+    def local_name(element: ET.Element) -> str:
+        return element.tag.rsplit("}", 1)[-1]
+
+    def ring_coordinates(ring: ET.Element) -> list[tuple[float, float]]:
+        text = next(
+            (
+                child.text
+                for child in ring.iter()
+                if local_name(child) == "coordinates" and child.text
+            ),
+            "",
+        )
+        coordinates = [
+            tuple(float(value) for value in coordinate.split(",")[:2])
+            for coordinate in text.split()
+        ]
+        if len(coordinates) < 4:
+            raise ValueError(f"Invalid polygon ring in DEA KMZ {kmz_path}")
+        return coordinates
+
+    polygons: list[Polygon] = []
+    for polygon_element in root.iter():
+        if local_name(polygon_element) != "Polygon":
+            continue
+        outer_boundary = next(
+            (
+                element
+                for element in polygon_element
+                if local_name(element) == "outerBoundaryIs"
+            ),
+            None,
+        )
+        if outer_boundary is None:
+            raise ValueError(f"DEA KMZ polygon has no outer ring: {kmz_path}")
+        outer_ring = next(
+            (element for element in outer_boundary.iter() if local_name(element) == "LinearRing"),
+            None,
+        )
+        if outer_ring is None:
+            raise ValueError(f"DEA KMZ polygon has no linear ring: {kmz_path}")
+        interiors = []
+        for boundary in polygon_element:
+            if local_name(boundary) != "innerBoundaryIs":
+                continue
+            inner_ring = next(
+                (element for element in boundary.iter() if local_name(element) == "LinearRing"),
+                None,
+            )
+            if inner_ring is None:
+                raise ValueError(f"DEA KMZ polygon has invalid inner ring: {kmz_path}")
+            interiors.append(ring_coordinates(inner_ring))
+        polygons.append(
+            make_valid(Polygon(ring_coordinates(outer_ring), interiors))
+        )
+    if not polygons:
+        raise ValueError(f"DEA KMZ contains no polygons: {kmz_path}")
+    return polygons
+
+
+def prepare_storage_areas() -> Path:
+    features: list[dict[str, Any]] = []
+    for source in DEA_STORAGE_AREAS:
+        raw_path = (
+            RAW
+            / "dea-storage"
+            / f"{source['hotspot_id']}.{source['format']}"
+        )
+        if source["format"] == "kmz":
+            geometries = kml_polygon_geometries(raw_path)
+        else:
+            frame = gpd.read_file(raw_path)
+            if frame.crs is None:
+                raise ValueError(
+                    f"DEA storage-area GeoJSON has no CRS: {raw_path}"
+                )
+            if frame.crs.to_epsg() != 4326:
+                frame = frame.to_crs("EPSG:4326")
+            geometries = [
+                make_valid(geometry)
+                for geometry in frame.geometry
+                if geometry is not None and not geometry.is_empty
+            ]
+        if not geometries:
+            raise ValueError(
+                f"No usable DEA storage-area geometry for {source['hotspot_id']}"
+            )
+        projected = gpd.GeoSeries(geometries, crs="EPSG:4326").to_crs(TARGET_CRS)
+        area_km2 = union_all(projected.array).area / 1_000_000
+        area_geometry = union_all(geometries)
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": mapping(area_geometry),
+                "properties": {
+                    "hotspot_id": source["hotspot_id"],
+                    "name": source["name"],
+                    "kind": source["kind"],
+                    "holder": source["holder"],
+                    "licence": source["licence"],
+                    "area_km2": round(area_km2, 3),
+                    "source_url": source["url"],
+                },
+            }
+        )
+
+    output_path = PROCESSED / "storage_areas.geojson"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".part")
+    temporary.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
+                "features": features,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(output_path)
+    LOG.info("Prepared DEA storage areas: %s polygons", len(features))
+    return output_path
 
 
 def sanitize_wfs_page(
@@ -774,6 +1072,21 @@ def download_sources(force: bool) -> dict[str, dict[str, Any]]:
             layer, RAW / "eea" / filename, force, manifest.get(key)
         )
         save_manifest()
+    for source in DEA_STORAGE_AREAS:
+        key = f"dea_storage_area_{source['hotspot_id']}"
+        suffix = source["format"]
+        destination = (
+            RAW / "dea-storage" / f"{source['hotspot_id']}.{suffix}"
+        )
+        if suffix == "kmz":
+            manifest[key] = download_file(
+                source["url"], destination, force, manifest.get(key)
+            )
+        else:
+            manifest[key] = download_dea_storage_area(
+                source, destination, force, manifest.get(key)
+            )
+        save_manifest()
     api_key = os.environ.get(DATAFORDELER_WFS_KEY)
     for key, source in WFS_SOURCES.items():
         source_record = download_wfs_source(key, source, force, api_key)
@@ -910,7 +1223,11 @@ def extend_extent_to_offshore_storage(
             x, y = transformer.transform(lon, lat)
             storage_point = Point(x, y)
             identifier = (record.get("id") or "").strip()
-            if identifier in {"greensand_nini_west", "bifrost_harald"}:
+            if identifier in {
+                "greensand_nini_west",
+                "bifrost_harald",
+                "inez",
+            }:
                 offshore_sites[identifier] = storage_point
             if extent_geometry.covers(storage_point):
                 continue
@@ -920,15 +1237,19 @@ def extend_extent_to_offshore_storage(
                     corridor_half_width_m
                 )
             )
-    if {"greensand_nini_west", "bifrost_harald"} <= offshore_sites.keys():
+    north_sea_sites = (
+        "greensand_nini_west",
+        "bifrost_harald",
+        "inez",
+    )
+    if set(north_sea_sites) <= offshore_sites.keys():
         landfalls = [
             nearest_points(land_geometry, offshore_sites[identifier])[0]
-            for identifier in ("greensand_nini_west", "bifrost_harald")
+            for identifier in north_sea_sites
         ]
         north_sea_corridor = MultiPoint(
             [
-                offshore_sites["greensand_nini_west"],
-                offshore_sites["bifrost_harald"],
+                *(offshore_sites[identifier] for identifier in north_sea_sites),
                 *landfalls,
             ]
         ).convex_hull.buffer(corridor_half_width_m)
@@ -1802,6 +2123,18 @@ def write_source_register(manifest: dict[str, dict[str, Any]]) -> None:
                 manifest_key,
             )
         )
+    for source in DEA_STORAGE_AREAS:
+        rows.append(
+            (
+                f"DEA CO2 storage area: {source['name']}",
+                "Danish Energy Agency (Energistyrelsen)",
+                source["url"],
+                "No licence stated; attribution: Danish Energy Agency "
+                "(Energistyrelsen), CO2 storage licensing map",
+                "EPSG:4326 (processed from the source layer)",
+                f"dea_storage_area_{source['hotspot_id']}",
+            )
+        )
     content = [
         "# Data sources",
         "",
@@ -1843,16 +2176,18 @@ def write_source_register(manifest: dict[str, dict[str, Any]]) -> None:
             "",
             "## Hotspot coordinates and project metadata",
             "",
-            "The 15 candidate points in `data/input/hotspots.csv` are routing "
+            "The 18 candidate points in `data/input/hotspots.csv` are routing "
             "anchors, not surveyed pipeline endpoints or proof of commercial "
             "storage permission. Coordinates are stored in WGS84 (EPSG:4326). "
             "Storage exploration-area points are representative centroids or "
-            "platform proxies; the underlying DEA licensing polygons are not "
-            "redistributed.",
+            "platform proxies; corresponding official DEA storage polygons "
+            "are available in `data/processed/storage_areas.geojson`.",
             "",
             "| Information | Publisher | Reference URL | Terms / caveat | CRS / date |",
             "|---|---|---|---|---|",
             "| Gassum, Havnsø, Rødby, Stenlille and Thorning storage-area coordinates and statuses | Danish Energy Agency | <https://energidata.maps.arcgis.com/apps/instant/basic/index.html?appid=2bd1bfe3bf644cf4adbe683d2f3cad09> | Map item does not state licence terms; this project uses cited representative points only, not the polygons | DEA area centroids EPSG:25832 transformed to EPSG:4326; researched 2026-10-07 |",
+            "| Inez, Lisa and Jammerbugt offshore storage-area coordinates | Danish Energy Agency | <https://energidata.maps.arcgis.com/apps/instant/basic/index.html?appid=2bd1bfe3bf644cf4adbe683d2f3cad09> | Designation/licence polygons are provided separately below; candidate points are polygon centroids | EPSG:4326; researched 2026-10-08 |",
+            "| DEA CO2 storage licensing-map polygons (10 storage areas) | Danish Energy Agency (Energistyrelsen) | <https://energidata.maps.arcgis.com/apps/instant/basic/index.html?appid=2bd1bfe3bf644cf4adbe683d2f3cad09> | No licence stated; attribution: Danish Energy Agency (Energistyrelsen), CO2 storage licensing map | EPSG:4326; downloaded as source layers and written to `data/processed/storage_areas.geojson` |",
             "| Nini A and Harald platform coordinate proxies | FOGA | <https://www.foga.dk/en/foga-info-north-sea/totalenergies/haraldtrym/> | Approximate platform proxies; not surveyed injection points | WGS84 coordinates; researched 2026-10-07 |",
             "| EU ETS verified 2024 emissions | European Commission, DG CLIMA / Union Registry | <https://climate.ec.europa.eu/areas-action/carbon-markets/eu-emissions-trading-system-eu-ets/union-registry_en> | Fossil t CO2e; excludes biogenic CO2. Registry source terms apply; no source file redistributed | Not spatial; 2024 values from the 2026-04-01 extract cited in research notes |",
             "| Aalborg Portland capture contract | Danish Energy Agency | <https://ens.dk/forsyning-og-forbrug/ccs-udbud-og-anden-stoette-til-udvikling-af-ccs> | Planned capture, not operational volume | Not spatial; researched 2026-10-07 |",
@@ -1947,6 +2282,7 @@ def prepare_data(
     prepare_natura2000(extent)
     prepare_population(extent)
     prepare_phase_b_layers(extent)
+    prepare_storage_areas()
     if manifest:
         write_source_register(manifest)
     LOG.info("Data acquisition and preparation completed")

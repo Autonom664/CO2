@@ -154,15 +154,15 @@ mask.
 8-neighbour movement, so diagonal moves account for their longer distance.
 The curated demo input contains eight emitter/receiving-hub sources and seven
 potential storage sites. Delivery routes run from every source to every
-storage site: 8 × 7 = 56 routes in `routes.geojson`. The minimum spanning
+storage site: 8 × 10 = 80 routes in `routes.geojson`. The minimum spanning
 network is built separately from least-cost paths between all
-15 × 14 / 2 = 105 hotspot pairs. Its 14 edges can therefore link two emitters,
+18 × 17 / 2 = 153 hotspot pairs. Its 17 edges can therefore link two emitters,
 or an emitter to a hub, directly. The router runs one cumulative cost
 calculation per hotspot and traces each run to the hotspots it needs. Output features include endpoint IDs/names,
 roles, project status, path length, accumulated cost, endpoint snap distances,
 and kilometres along each cost class, including open sea.
 
-The hotspot input contains exactly 15 rows with unique `id`, non-empty
+The hotspot input contains exactly 18 rows with unique `id`, non-empty
 `name`, WGS84 `lon`/`lat`, and `role=source` or `role=storage`. The code keeps
 all-pairs mode for legacy files where no roles are provided.
 
@@ -171,6 +171,9 @@ How the storage anchors were placed:
   the Danish Energy Agency's licence or designation polygon. These polygons
   cover 150–590 km², so the point is not an injection site.
 - **Nini West and Bifrost:** the Nini A and Harald platform positions.
+- **Inez, Lisa and Jammerbugt:** centroids of Danish Energy Agency offshore
+  licence/designation areas. The shared North Sea analysis corridor spans
+  Nini West, Bifrost and Inez and their Danish coastal landfalls.
 
 Optional columns carry EU ETS 2024 verified emissions
 (`ets_verified_2024_t`), which are fossil only and exclude biogenic CO2,
@@ -277,14 +280,14 @@ Status: **Implemented** means the open workflow runs in this repository;
 | Cost Distance / Distance Accumulation | `skimage.graph.MCP_Geometric.find_costs`, one run per source | `routing.py` | Implemented |
 | Cost Back Link / Cost Path / Optimal Path As Line | `MCP_Geometric.traceback` to each storage cell, written as GeoJSON lines | `routing.py` | Implemented |
 | Tabulate Area / Zonal Statistics along routes | Per-step walk of the cost-class bitmask giving `km_*` per class | `routing.py` | Implemented |
-| Optimal Region Connections / Cost Connectivity | Kruskal minimum spanning tree over least-cost paths between all 105 hotspot pairs | `routing.py` | Partial: see below |
+| Optimal Region Connections / Cost Connectivity | Kruskal minimum spanning tree over least-cost paths between all 153 hotspot pairs | `routing.py` | Partial: see below |
 | Path Distance (slope/vertical factor) | — | — | Not implemented: no terrain model or bathymetry yet |
 | Cost Corridor | Sum of two cost-distance rasters | — | Not implemented: would show near-optimal alternative corridors |
 | Simplify Line (web display) | Shapely `simplify` (`web.route_simplify_m`, default 25 m) before publishing | `build_web.py` | Implemented |
 | Web map / ArcGIS Online | Static MapLibre GL JS site, Nginx container | `build_web.py`, `web/` | Implemented |
 
 **Optimal Region Connections versus this network.** Like ArcGIS, the network
-considers connections between every pair of inputs (105 pairs for 15
+considers connections between every pair of inputs (153 pairs for 18
 hotspots), so emitters can link to nearby hubs directly. It differs in three
 ways:
 - The inputs are points, not regions.

@@ -3,7 +3,7 @@
 Serve web/ (for example `python -m http.server 18765 --directory web`), then
 run with a Python that has Playwright and its Chromium installed:
 
-    python validation/ui_smoke.py http://127.0.0.1:18765/ --routes 56 --sources 8
+    python validation/ui_smoke.py http://127.0.0.1:18765/ --routes 80 --sources 8
 
 Prints PASS/FAIL per check, writes screenshots to --shots, and exits 1 on any
 failure. It only reads the site; it never changes files in the project.
@@ -201,7 +201,7 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("url")
-    parser.add_argument("--routes", type=int, default=56)
+    parser.add_argument("--routes", type=int, default=80)
     parser.add_argument("--sources", type=int, default=8)
     parser.add_argument("--shots", type=Path, default=Path("ui_smoke_shots"))
     args = parser.parse_args()

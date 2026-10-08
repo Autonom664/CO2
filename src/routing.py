@@ -24,7 +24,7 @@ PROCESSED = ROOT / "data" / "processed"
 HOTSPOTS_FILE = ROOT / "data" / "input" / "hotspots.csv"
 CONFIG_FILE = ROOT / "config" / "costs.yaml"
 LOG = logging.getLogger("routing")
-EXPECTED_HOTSPOTS = 15
+EXPECTED_HOTSPOTS = 18
 
 CLASS_PROPERTIES = {
     "open_land": "km_open_land",
@@ -97,7 +97,7 @@ def load_hotspots(
     if not path.exists():
         raise FileNotFoundError(
             f"Hotspot input is required for routing: {path}. "
-            "Provide 15 rows with id,name,lon,lat columns; the coordinates "
+            "Provide 18 rows with id,name,lon,lat columns; the coordinates "
             "must be documented candidate locations."
         )
     with path.open(encoding="utf-8-sig", newline="") as stream:

@@ -177,8 +177,8 @@ class RoutingTests(unittest.TestCase):
             transform = from_origin(500_000, 6_200_000, 100, 100)
             profile = {
                 "driver": "GTiff",
-                "width": 30,
-                "height": 30,
+                "width": 40,
+                "height": 40,
                 "count": 1,
                 "crs": "EPSG:25832",
                 "transform": transform,
@@ -189,14 +189,14 @@ class RoutingTests(unittest.TestCase):
                 "w",
                 **(profile | {"dtype": "float32", "nodata": -9999}),
             ) as dataset:
-                dataset.write(np.ones((30, 30), dtype=np.float32), 1)
+                dataset.write(                np.ones((40, 40), dtype=np.float32), 1)
             with rasterio.open(
                 processed / "cost_class_mask_100m.tif",
                 "w",
                 **(profile | {"dtype": "uint32", "nodata": 0}),
             ) as dataset:
                 dataset.write(
-                    np.full((30, 30), class_bits["open_land"], dtype=np.uint32),
+                    np.full((40, 40), class_bits["open_land"], dtype=np.uint32),
                     1,
                 )
                 dataset.update_tags(class_bits=json.dumps(class_bits))
@@ -224,7 +224,7 @@ class RoutingTests(unittest.TestCase):
                         "capture_source_url",
                     ]
                 )
-                for index in range(15):
+                for index in range(18):
                     row = 2 + (index // 4) * 8
                     col = 2 + (index % 4) * 6
                     x, y = rasterio.transform.xy(
@@ -283,16 +283,16 @@ class RoutingTests(unittest.TestCase):
                 )
             with pairwise_path.open(encoding="utf-8", newline="") as stream:
                 pairs = list(csv.DictReader(stream))
-            self.assertEqual(len(pairs), 105)
+            self.assertEqual(len(pairs), 153)
             self.assertTrue(all(pair["from_id"].startswith("H") for pair in pairs))
             routes = gpd.read_file(routes_path)
-            self.assertEqual(len(routes), 56)
+            self.assertEqual(len(routes), 80)
             self.assertIn("km_dwelling_proximity", routes.columns)
             with rasterio.open(processed / "cost_class_mask_100m.tif") as mask:
                 self.assertEqual(mask.dtypes[0], "uint32")
             self.assertEqual(set(routes["from_role"]), {"source"})
             self.assertEqual(set(routes["to_role"]), {"storage"})
-            self.assertEqual(len(gpd.read_file(network_path)), 14)
+            self.assertEqual(len(gpd.read_file(network_path)), 17)
             hotspots = gpd.read_file(processed / "hotspots.geojson").set_index("id")
             self.assertEqual(hotspots.loc["H1", "ets_installation_id"], "342")
             self.assertEqual(hotspots.loc["H1", "ets_verified_2024_t"], 12345)

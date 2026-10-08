@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+import zipfile
 from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError
@@ -19,6 +20,7 @@ from src.acquire_data import (
     exclude_foreign_land_from_extent,
     download_wfs_source,
     extend_extent_to_offshore_storage,
+    kml_polygon_geometries,
     osm_tag_value,
     prepare_coast_and_extent,
     sanitize_wfs_page,
@@ -51,7 +53,7 @@ class OffshoreExtentTests(unittest.TestCase):
             self.assertTrue(expanded.covers(Point(510_000, 6_200_000)))
             self.assertFalse(expanded.covers(Point(510_000, 6_203_000)))
 
-    def test_north_sea_extent_connects_nini_and_bifrost_corridors(self) -> None:
+    def test_north_sea_extent_connects_nini_bifrost_and_inez_corridors(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             hotspots_path = Path(temporary) / "hotspots.csv"
             transformer = Transformer.from_crs(
@@ -64,6 +66,13 @@ class OffshoreExtentTests(unittest.TestCase):
                 writer.writerow(["id", "role", "lon", "lat"])
                 writer.writerow(["greensand_nini_west", "storage", *nini])
                 writer.writerow(["bifrost_harald", "storage", *bifrost])
+                writer.writerow(
+                    [
+                        "inez",
+                        "storage",
+                        *transformer.transform(540_000, 6_200_000),
+                    ]
+                )
 
             land = box(499_000, 6_199_000, 501_000, 6_201_000)
             expanded = extend_extent_to_offshore_storage(
@@ -71,6 +80,27 @@ class OffshoreExtentTests(unittest.TestCase):
             )
 
             self.assertTrue(expanded.covers(Point(525_000, 6_200_000)))
+            self.assertTrue(expanded.covers(Point(535_000, 6_200_000)))
+
+    def test_reads_storage_polygon_from_dea_kmz(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            kmz_path = Path(temporary) / "thorning.kmz"
+            kml = (
+                b'<?xml version="1.0" encoding="UTF-8"?>'
+                b'<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+                b"<Placemark><Polygon><outerBoundaryIs><LinearRing>"
+                b"<coordinates>9,56 9.1,56 9.1,56.1 9,56.1 9,56</coordinates>"
+                b"</LinearRing></outerBoundaryIs></Polygon></Placemark>"
+                b"</Document></kml>"
+            )
+            with zipfile.ZipFile(kmz_path, "w") as archive:
+                archive.writestr("doc.kml", kml)
+
+            polygons = kml_polygon_geometries(kmz_path)
+
+            self.assertEqual(len(polygons), 1)
+            self.assertTrue(polygons[0].is_valid)
+            self.assertAlmostEqual(polygons[0].area, 0.01)
 
     def test_open_sea_layer_excludes_foreign_land(self) -> None:
         full_extent = box(0, 0, 4, 4)
