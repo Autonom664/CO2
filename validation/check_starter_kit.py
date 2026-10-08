@@ -5,8 +5,9 @@
 The guide (docs/wiki/modelbuilder.md) names every raster, geodatabase
 layer and table it uses. This checks that the kit contains exactly those,
 that every raster shares the 100 m analysis grid of the published cost
-surface, that masks are 0/1, and that every configured layer has a
-raster. Prints PASS/FAIL per check and exits 1 if anything fails.
+surface, that masks are 0/1, that the disclaimer and backup instructions
+are included, and that every configured layer has a raster. Prints
+PASS/FAIL per check and exits 1 if anything fails.
 """
 
 from __future__ import annotations
@@ -35,6 +36,8 @@ GDB_LAYERS = [
     "sites", "analysis_area", "published_routes", "published_network",
     "published_corridors", "storage_areas", "baltic_pipe_osm",
 ]
+# Key phrases of the safety notice that must open the kit's README.
+NOTICE_PHRASES = ["provided as is", "not engineering", "new, empty folder", "back up", "disclaimer"]
 WEIGHT_COLUMNS = {"layer", "raster", "cost_key", "weight", "treatment", "group", "surface"}
 
 
@@ -76,8 +79,29 @@ def main() -> int:
             base = base / roots.pop()
         rasters = {p.name: p for p in (base / "rasters").glob("*.tif")}
 
-        ok &= report("README present", [] if any(Path(n).name.lower().startswith("readme") for n in names)
-                     else ["no README in the kit"])
+        readme_path = next(base.rglob("README.txt"), None)
+        ok &= report("README present", [] if readme_path else ["no README.txt in the kit"])
+        if readme_path:
+            readme_problems = []
+            try:
+                readme = readme_path.read_text(encoding="utf-8")
+                # The notice must open the README; compare its key phrases,
+                # not its exact line wrapping.
+                opening = " ".join(readme[:600].split()).lower()
+                for phrase in NOTICE_PHRASES:
+                    if phrase not in opening:
+                        readme_problems.append(f'the opening notice lacks "{phrase}"')
+            except UnicodeError:
+                readme_problems.append("README.txt is not valid UTF-8")
+            ok &= report("README UTF-8 and opening safety notice", readme_problems)
+        disclaimer_path = next(base.rglob("DISCLAIMER.md"), None)
+        disclaimer_problems = [] if disclaimer_path else ["DISCLAIMER.md is missing"]
+        if disclaimer_path:
+            try:
+                disclaimer_path.read_text(encoding="utf-8")
+            except UnicodeError:
+                disclaimer_problems.append("DISCLAIMER.md is not valid UTF-8")
+        ok &= report("DISCLAIMER.md present and UTF-8", disclaimer_problems)
         missing = sorted(wanted - rasters.keys())
         ok &= report(f"every raster named in the guide is in the kit ({len(wanted)})", missing)
         unconfigured = sorted(layer_rasters - rasters.keys())

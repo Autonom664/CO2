@@ -47,7 +47,11 @@ class StarterKitCheckTests(unittest.TestCase):
             "layer,raster,cost_key,weight,treatment,group,surface\n"
             "wetlands,l_wetlands.tif,wetland,1,cost,wet_nature,land\n"
             "bnbo,l_bnbo.tif,protected_barrier,,barrier,,any\n", encoding="utf-8")
-        (kit / "README.txt").write_text("test kit", encoding="utf-8")
+        (kit / "README.txt").write_text(
+            "Research and teaching tool, provided as is; not engineering or permitting advice.\n"
+            "Unzip into a NEW, EMPTY folder and back up your ArcGIS project first. See DISCLAIMER.\n",
+            encoding="utf-8")
+        (kit / "DISCLAIMER.md").write_text("# Disclaimer\n", encoding="utf-8")
         archive = root / "kit.zip"
         with zipfile.ZipFile(archive, "w") as zf:
             for path in kit.rglob("*"):
@@ -82,6 +86,21 @@ class StarterKitCheckTests(unittest.TestCase):
         self.assertIn("FAIL  all rasters on the 100 m analysis grid", output)
         self.assertIn("l_bnbo.tif", output)
         self.assertIn("FAIL  mask rasters contain only 0 and 1", output)
+
+    def test_missing_safety_notice_and_disclaimer_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive = self.build(root)
+            with zipfile.ZipFile(archive) as zf:
+                kept = {n: zf.read(n) for n in zf.namelist() if not n.endswith("DISCLAIMER.md")}
+            kept["co2_arcgis_starter_kit/README.txt"] = b"Just data."
+            with zipfile.ZipFile(archive, "w") as zf:
+                for name, data in kept.items():
+                    zf.writestr(name, data)
+            code, output = self.run_check(archive, root / "reference.tif")
+        self.assertEqual(code, 1)
+        self.assertIn("lacks", output)
+        self.assertIn("DISCLAIMER.md is missing", output)
 
 
 if __name__ == "__main__":
