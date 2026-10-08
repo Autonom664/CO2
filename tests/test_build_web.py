@@ -18,24 +18,8 @@ from src import build_web
 class BuildWebTests(unittest.TestCase):
     def test_builds_static_assets_from_aligned_small_rasters(self) -> None:
         class_bits = {
-            "open_land": 1,
-            "open_sea": 2,
-            "road_major": 4,
-            "road_minor": 16384,
-            "railway_crossing": 8,
-            "watercourse_crossing": 16,
-            "urban_area": 32,
-            "lake": 64,
-            "wetland": 128,
-            "natura2000_habitats": 256,
-            "natura2000_birds": 512,
-            "protected_nature_s3": 1024,
-            "protected_reserves": 2048,
-            "population": 4096,
-            "building_barrier": 8192,
-            "forest": 32768,
-            "dwelling_proximity": 65536,
-            "parallel_corridor": 131072,
+            name: 1 << index
+            for index, name in enumerate(build_web.LAYER_PRESENTATION)
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

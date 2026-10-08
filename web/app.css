@@ -68,7 +68,26 @@ body { display: flex; flex-direction: column; }
 
 .panel-section { padding: .5rem 0 .85rem; border-bottom: 1px solid #ffffff21; }
 .layer-group { padding: .75rem 0 .45rem; border-bottom: 1px solid #ffffff21; }
-.layer-group h2 { margin-bottom: .5rem; }
+.layer-group h2 { display: inline; margin: 0; }
+.layer-group summary {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .1rem 0 .35rem;
+  cursor: pointer;
+  list-style: none;
+}
+.layer-group summary::-webkit-details-marker { display: none; }
+.layer-group summary::before { content: "▸"; color: #9fc4bd; font-size: .75rem; }
+.layer-group[open] summary::before { content: "▾"; }
+.group-count {
+  margin-left: auto;
+  border-radius: 8px;
+  padding: 0 .4rem;
+  color: #bdd0cd;
+  background: #ffffff14;
+  font-size: .68rem;
+}
 .layer-toggle {
   display: flex;
   min-height: 30px;

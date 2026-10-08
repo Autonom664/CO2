@@ -45,6 +45,20 @@ LAYER_PRESENTATION = {
     "population": ("Population density", "#d84141", "Population"),
     "dwelling_proximity": ("Within 200 m of buildings", "#c2185b", "Population"),
     "parallel_corridor": ("Alongside existing infrastructure", "#00897b", "Infrastructure"),
+    "drinking_water": ("Drinking-water areas (OSD, OD)", "#4fc3f7", "Groundwater"),
+    "groundwater_catchments": ("Groundwater abstraction catchments", "#9bd8f2", "Groundwater"),
+    "water_protection": ("Lake and stream protection lines", "#0277bd", "Water"),
+    "contaminated_land": ("Contaminated land (V1, V2)", "#8d6e63", "Land use"),
+    "ancient_monument_protection": ("Ancient-monument protection zones", "#b08968", "Heritage and coast"),
+    "coastal_protection": ("Beach protection and fredskov", "#9ccc65", "Heritage and coast"),
+    "protected_barrier": ("Barriers: wells (BNBO), monuments, wind farms, munitions", "#3e2723", "Heritage and coast"),
+    "marine_shipping": ("Shipping zones", "#5c6bc0", "Marine"),
+    "marine_renewables": ("Renewable-energy zones", "#26a69a", "Marine"),
+    "marine_materials": ("Raw-material and nature zones", "#bcaaa4", "Marine"),
+    "marine_cable_corridor": ("Cable corridors (discount)", "#00acc1", "Marine"),
+    "offshore_wind": ("Planned offshore wind", "#80cbc4", "Marine"),
+    "munitions": ("Dumped munitions (500 m)", "#e53935", "Marine"),
+    "subsea_infrastructure": ("Subsea pipelines and cables", "#ab47bc", "Marine"),
     "building_barrier": ("Buildings (barriers)", "#242424", "Infrastructure"),
 }
 
@@ -64,17 +78,27 @@ def class_score_label(config: dict[str, Any], class_name: str) -> str:
     if class_name == "parallel_corridor":
         factor = config.get("parallel_corridor", {}).get("factor")
         return "" if factor is None else f"×{factor:g}"
-    cost_key = class_name
-    for layer in config.get("layers", {}).values():
-        if layer.get("class_bit") == class_name:
-            cost_key = layer["cost"]
-            break
-    score = config.get("costs", {}).get(cost_key)
+    costs = config.get("costs", {})
+    keys = [
+        layer["cost"]
+        for layer in config.get("layers", {}).values()
+        if layer.get("class_bit") == class_name and "cost" in layer
+    ] or [class_name]
+    score = costs.get(keys[0])
     if isinstance(score, dict):
         if "max_score" in score:
             return f"0–{score['max_score']:g}"
         return f"{score.get('minimum', '?')}–{score.get('maximum', '?')}"
-    return "" if score is None else str(score)
+    # Several source layers may share one class bit with different scores
+    # (for example OSD 4 and OD 2), so show the range.
+    scores = sorted({costs[k] for k in keys if isinstance(costs.get(k), (int, float))})
+    if not scores:
+        return ""
+    if class_name in config.get("discount_classes", []):
+        return f"−{scores[0]:g}"
+    if len(scores) == 1:
+        return f"{scores[0]:g}"
+    return f"{scores[0]:g}–{scores[-1]:g}"
 
 
 def publish_lines(source: Path, destination: Path, tolerance_m: float) -> None:

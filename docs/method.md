@@ -120,6 +120,34 @@ The builder outputs:
 - `data/processed/cost_surface_metadata.json` — CRS, alignment, coverage, and
   cost range.
 
+### Phase B constraint layers
+
+These come from Danish public registers and EU marine data. The sources,
+licences and endpoints are in `data/SOURCES.md`. Every layer is optional: if
+a source is not downloaded (for example the Datafordeler layers without an
+API key), the class is skipped and has no map toggle.
+
+| Class | Source layers | Score | Treatment |
+|---|---|---:|---|
+| Drinking-water areas | OSD / OD (Miljøstyrelsen) | 4 / 2 | Additive |
+| Groundwater abstraction catchments | Indvindingsoplande | 3 | Additive |
+| Lake and stream protection lines | Miljøportal `soe_bes_linjer`, `aa_bes_linjer` | 5 | Additive |
+| Ancient-monument protection zones | 100 m zones (Slots- og Kulturstyrelsen) | 5 | Additive |
+| Contaminated land | V2 / V1 mapped areas | 6 / 3 | Additive (soil handling and disposal) |
+| Beach protection and *fredskov* | Datafordeler cadastral layers | 7 | Additive, land only |
+| **Barriers** | Wells' protection areas (BNBO), protected ancient monuments, operating or approved offshore wind farms, munitions dump polygons | — | Impassable, like buildings |
+| Shipping zones | Danish marine spatial plan (`zone_type` S) | 6 | Additive |
+| Renewable-energy zones | Marine plan (Ev/Ei) | 8 | Additive |
+| Raw-material and nature zones | Marine plan (R, N) | 6 | Additive |
+| Planned offshore wind | EMODnet wind-farm polygons, planned | 7 | Additive |
+| Dumped munitions (points) | EMODnet points, 500 m buffer | 8 | Additive |
+| Subsea pipelines / cables | EMODnet | 4 / 5 | Additive crossing cost |
+| Cable corridors | Marine plan (Ek) | −1 | Discount applied after the additive sum, floored at the open-land base |
+
+Where a class has two source scores (OSD/OD, V2/V1, pipelines/cables), the
+map badge shows the range. Phase B uses all 32 bits of the `uint32` class
+mask.
+
 ## Hotspot model and routing
 
 `src/routing.py` uses `skimage.graph.MCP_Geometric` with fully connected

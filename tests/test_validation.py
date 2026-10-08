@@ -33,5 +33,24 @@ class CompareLinesTests(unittest.TestCase):
         self.assertEqual({start[0], end[0]}, {0.0, 10_000.0})
 
 
+class CostSurfaceChoiceTests(unittest.TestCase):
+    def test_prefers_validation_surface_and_flags_published_as_biased(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from src import routing
+        with tempfile.TemporaryDirectory() as temporary:
+            processed = Path(temporary)
+            with patch.object(routing, "PROCESSED", processed):
+                path, biased = baltic_pipe.choose_cost_surface(100, None)
+                self.assertEqual(path, processed / "cost_surface_100m.tif")
+                self.assertTrue(biased)
+                (processed / "validation").mkdir()
+                (processed / "validation" / "cost_surface_100m.tif").write_bytes(b"")
+                path, biased = baltic_pipe.choose_cost_surface(100, None)
+                self.assertEqual(path.parent.name, "validation")
+                self.assertFalse(biased)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -85,11 +85,35 @@ def endpoints(reference: LineString | MultiLineString) -> tuple[tuple, tuple]:
     return best
 
 
-def run(tolerances: tuple[float, ...] = (0.01, 0.03)) -> dict[str, Any]:
+def choose_cost_surface(resolution: int, explicit: Path | None) -> tuple[Path, bool]:
+    """Prefer the validation surface that excludes Baltic Pipe's own OSM ways.
+
+    Returns the path and whether the result is biased (published surface,
+    whose parallel-corridor discount includes the pipeline being checked).
+    """
+    name = f"cost_surface_{resolution}m.tif"
+    if explicit is not None:
+        return explicit, explicit.resolve() == (routing.PROCESSED / name).resolve()
+    validation = routing.PROCESSED / "validation" / name
+    if validation.exists():
+        return validation, False
+    return routing.PROCESSED / name, True
+
+
+def run(
+    tolerances: tuple[float, ...] = (0.01, 0.03),
+    cost_path: Path | None = None,
+) -> dict[str, Any]:
     config = routing.load_config(routing.CONFIG_FILE)
     resolution = int(config["grid"]["resolution_m"])
     max_snap_m = float(config.get("routing", {}).get("max_snap_distance_m", 2000))
-    with rasterio.open(routing.PROCESSED / f"cost_surface_{resolution}m.tif") as source:
+    cost_path, biased = choose_cost_surface(resolution, cost_path)
+    if biased:
+        LOG.warning(
+            "Using the published cost surface: its infrastructure discount "
+            "includes Baltic Pipe itself, so the result is biased."
+        )
+    with rasterio.open(cost_path) as source:
         cost = source.read(1)
         transform, crs, nodata = source.transform, source.crs, source.nodata
     valid = np.isfinite(cost) & (cost != nodata) & (cost > 0)
@@ -111,6 +135,12 @@ def run(tolerances: tuple[float, ...] = (0.01, 0.03)) -> dict[str, Any]:
     )
     report = compare_lines(model, reference)
     report["model_cost"] = round(optimum, 1)
+    report["cost_surface"] = (
+        cost_path.relative_to(routing.ROOT).as_posix()
+        if cost_path.is_relative_to(routing.ROOT)
+        else str(cost_path)
+    )
+    report["biased"] = biased
     through = from_start + corridors.accumulated_cost(mcp_cost, cells[1])
     for tolerance in tolerances:
         corridor, _ = corridors.corridor_polygon(
@@ -130,9 +160,15 @@ def run(tolerances: tuple[float, ...] = (0.01, 0.03)) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tolerances", default="0.01,0.03")
+    parser.add_argument(
+        "--cost-surface", type=Path,
+        help="Default: data/processed/validation/ if present, else the published surface (biased)",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    print(json.dumps(run(tuple(float(v) for v in args.tolerances.split(","))), indent=2))
+    print(json.dumps(run(
+        tuple(float(v) for v in args.tolerances.split(",")), args.cost_surface
+    ), indent=2))
 
 
 if __name__ == "__main__":

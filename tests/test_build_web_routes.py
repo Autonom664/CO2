@@ -172,6 +172,17 @@ class ScoreLabelTests(unittest.TestCase):
         self.assertEqual(
             build_web.class_score_label(CONFIG, "parallel_corridor"), "×0.8"
         )
+        multi = {
+            "costs": {"osd": 4, "od": 2, "cable": 1},
+            "layers": {
+                "a": {"class_bit": "drinking_water", "cost": "osd"},
+                "b": {"class_bit": "drinking_water", "cost": "od"},
+                "c": {"class_bit": "marine_cable_corridor", "cost": "cable"},
+            },
+            "discount_classes": ["marine_cable_corridor"],
+        }
+        self.assertEqual(build_web.class_score_label(multi, "drinking_water"), "2–4")
+        self.assertEqual(build_web.class_score_label(multi, "marine_cable_corridor"), "−1")
 
 
 class DisplayGridTests(unittest.TestCase):

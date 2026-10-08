@@ -164,6 +164,9 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
             else:
                 check(False, "hotspot with ETS data found on the map")
 
+        groups = page.locator("#input-layers details").count()
+        check(groups >= 3, "layer groups are collapsible", f"{groups} groups")
+        page.evaluate("document.querySelectorAll('#input-layers details').forEach(d => d.open = true)")
         toggles = page.locator("#input-layers input[type=checkbox]")
         for index in range(toggles.count()):
             toggles.nth(index).check()
@@ -179,12 +182,8 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
               return new Set(on).size;
             }"""
         )
-        empty = page.evaluate(
-            "fetch('data/map.json').then(r => r.json())"
-            ".then(m => m.layers.filter(l => !l.tiles.length).length)"
-        )
-        check(visible + empty == toggles.count(), "every input layer toggles on",
-              f"{visible} drawn + {empty} empty of {toggles.count()}")
+        check(visible == toggles.count(), "every input layer toggles on",
+              f"{visible}/{toggles.count()} (classes without data have no toggle)")
         browser.close()
 
     check(not errors, "no console errors or failed requests", "; ".join(errors[:3]))

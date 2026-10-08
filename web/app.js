@@ -283,15 +283,18 @@ function addRoutePopup(map, event) {
 function setupInputLayers(map, layers) {
   const container = document.getElementById("input-layers");
   const groups = new Map();
-  for (const layer of layers) {
+  // Classes without data (for example optional sources not downloaded)
+  // get no toggle.
+  for (const layer of layers.filter((candidate) => (candidate.tiles || []).length)) {
     if (!groups.has(layer.group)) groups.set(layer.group, []);
     groups.get(layer.group).push(layer);
   }
   for (const [groupName, groupLayers] of groups) {
-    const section = document.createElement("section");
+    // Collapsible groups keep a long layer list manageable.
+    const section = document.createElement("details");
     section.className = "layer-group";
-    const title = document.createElement("h2");
-    title.textContent = groupName;
+    const title = document.createElement("summary");
+    title.innerHTML = `<h2>${escapeHtml(groupName)}</h2><span class="group-count">${groupLayers.length}</span>`;
     section.appendChild(title);
     for (const layer of groupLayers) {
       section.appendChild(makeLayerToggle(
