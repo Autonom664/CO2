@@ -334,6 +334,21 @@ class RouteManifestTests(WebFixture):
         current = self.build()
         self.assertIn("corridors", [l["id"] for l in current["route_layers"]])
 
+    def test_storage_areas_published_without_routes_and_removed_when_gone(self) -> None:
+        gpd.GeoDataFrame(
+            {"hotspot_id": ["x"], "name": ["Area"], "kind": ["licence"]},
+            geometry=[Point(9.0, 56.0).buffer(0.05)],
+            crs="EPSG:4326",
+        ).to_file(self.processed / "storage_areas.geojson", driver="GeoJSON")
+        manifest = self.build()
+        self.assertFalse(manifest["routes_available"])
+        self.assertEqual(manifest["route_layers"][0]["id"], "storage_areas")
+        self.assertTrue((self.output / "data" / "storage_areas.geojson").exists())
+        (self.processed / "storage_areas.geojson").unlink()
+        manifest = self.build()
+        self.assertNotIn("storage_areas", [l["id"] for l in manifest["route_layers"]])
+        self.assertFalse((self.output / "data" / "storage_areas.geojson").exists())
+
     def test_every_overlay_shares_the_display_grid(self) -> None:
         manifest = self.build()
         sizes = set()

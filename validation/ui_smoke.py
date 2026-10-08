@@ -80,7 +80,13 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
         badges = page.locator(".score-badge").count()
         check(badges >= 10, "score badges on layer toggles", f"{badges}")
 
+        if page.evaluate("!!window.co2Map.getLayer('storage-areas-fill')"):
+            areas = page.evaluate(
+                "window.co2Map.querySourceFeatures('storage_areas').length"
+            )
+            check(areas > 0, "storage licence areas loaded", f"{areas} features")
         has_routes = page.locator("#route-list-wrap").is_visible()
+
         if not has_routes:
             check("not" in page.locator("#route-layers").inner_text().lower()
                   or page.locator("#route-layers").inner_text() != "",

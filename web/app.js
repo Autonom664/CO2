@@ -12,6 +12,7 @@ const routeLayerIds = {
   minimum_spanning_network: "mst-network",
   hotspots: "hotspots",
   corridors: ["corridors-fill", "corridors-line"],
+  storage_areas: ["storage-areas-fill", "storage-areas-line"],
 };
 const noFeature = ["==", ["get", "from_id"], "__none__"];
 
@@ -169,6 +170,22 @@ function addGeoJsonLayer(map, layer, data) {
         "line-opacity": 0.95,
       },
     });
+  } else if (layer.id === "storage_areas") {
+    map.addLayer({
+      id: "storage-areas-fill",
+      type: "fill",
+      source: "storage_areas",
+      paint: {
+        "fill-color": ["case", ["==", ["get", "hotspot_id"], ""], "#9fa8da", "#2878a8"],
+        "fill-opacity": 0.18,
+      },
+    });
+    map.addLayer({
+      id: "storage-areas-line",
+      type: "line",
+      source: "storage_areas",
+      paint: { "line-color": "#1d5a80", "line-width": 1.4 },
+    });
   } else if (layer.id === "corridors") {
     const beforeId = map.getLayer("pair-routes") ? "pair-routes" : undefined;
     map.addLayer({
@@ -224,7 +241,20 @@ function addRoutePopup(map, event) {
     ? `${properties.from_name} → ${properties.to_name}`
     : properties.name || properties.id || "Hotspot";
   let rows = "";
-  if (properties.from_name) {
+  if (properties.licence !== undefined || properties.kind !== undefined) {
+    const details = [
+      ["Area type", properties.kind],
+      ["Holder", properties.holder],
+      ["Licence", properties.licence],
+      ["Area", properties.area_km2 ? `${Number(properties.area_km2).toFixed(0)} km²` : ""],
+    ].filter(([, value]) => value);
+    rows = `<table class="popup-table">${details.map(([key, value]) =>
+      `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(value)}</td></tr>`
+    ).join("")}</table><p class="popup-note">Source: Danish Energy Agency, CO₂ storage licensing map.</p>`;
+    if (properties.source_url) {
+      rows += `<p><a href="${escapeHtml(properties.source_url)}" target="_blank" rel="noopener noreferrer">Area source</a></p>`;
+    }
+  } else if (properties.from_name) {
     const entries = [
       ["From status", properties.from_project_status],
       ["To status", properties.to_project_status],
@@ -441,14 +471,14 @@ async function setupRoutes(map, manifest) {
   const section = document.getElementById("routes-section");
   const container = document.getElementById("route-layers");
   section.hidden = false;
-  if (!routeLayers.length) {
+  if (!manifest.routes_available) {
     const note = document.createElement("p");
     note.className = "muted";
     note.textContent = manifest.route_status
       || "Route outputs have not been generated yet.";
     container.appendChild(note);
-    return;
   }
+  if (!routeLayers.length) return;
   const data = {};
   await Promise.all(routeLayers.map(async (layer) => {
     try {
@@ -463,6 +493,7 @@ async function setupRoutes(map, manifest) {
       hotspots: "#f5f3ec",
       minimum_spanning_network: "#2c296e",
       corridors: "#ffd23f",
+      storage_areas: "#2878a8",
     }[layer.id] || "#d94d41";
     const defaultVisible = layer.id !== "routes";
     container.appendChild(makeLayerToggle(
@@ -497,7 +528,9 @@ async function setupRoutes(map, manifest) {
       if (feature) selectRoute(map, feature, { zoom: false, popup: false });
     });
   }
-  for (const layerId of ["pair-routes", "mst-network", "hotspots"]) {
+  // Registered bottom-up: with one popup at a time, the topmost feature's
+  // handler runs last and its popup wins.
+  for (const layerId of ["storage-areas-fill", "pair-routes", "mst-network", "hotspots"]) {
     if (!map.getLayer(layerId)) continue;
     map.on("click", layerId, (event) => addRoutePopup(map, event));
     map.on("mouseenter", layerId, () => { map.getCanvas().style.cursor = "pointer"; });

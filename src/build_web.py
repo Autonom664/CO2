@@ -469,6 +469,24 @@ def build_web(
                 tolerance,
             )
 
+    # Official storage licence/designation polygons are context, shown with
+    # or without routes, and drawn beneath them.
+    storage_areas = PROCESSED / "storage_areas.geojson"
+    published_areas = output_dir / "data" / "storage_areas.geojson"
+    if storage_areas.exists():
+        published_areas.write_bytes(storage_areas.read_bytes())
+        route_layers.insert(
+            0,
+            {
+                "id": "storage_areas",
+                "label": "Storage licence and designation areas (DEA)",
+                "kind": "geojson",
+                "url": "data/storage_areas.geojson",
+            },
+        )
+    else:
+        published_areas.unlink(missing_ok=True)
+
     info = {
         "title": "Denmark CO₂ pipeline routing",
         "version": int(time.time()),

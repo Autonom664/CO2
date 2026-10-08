@@ -242,7 +242,12 @@ vector GeoJSON layers; route lines are simplified to `web.route_simplify_m`
 `routing.py`. The sidebar lists routes by accumulated cost, filterable by
 source. It marks each source's cheapest storage option and the edges in the
 minimum spanning network, and highlights and zooms to the selected route.
-Each layer toggle shows the class's configured score.
+Each layer toggle shows the class's configured score. When
+`data/processed/storage_areas.geojson` exists, the official Danish Energy
+Agency licence, designation and permit polygons are drawn beneath the
+routes. Clicking one shows the holder, licence and area. Storage hotspots
+are the centroids of these polygons, except the two platform positions
+(Nini A, Harald).
 
 The basemap is the standard OpenStreetMap raster tile service with required
 visible attribution and online-use terms. The app itself is static; there is
