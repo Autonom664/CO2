@@ -1,0 +1,17 @@
+{
+  "model_km": 329.1,
+  "reference_km": 299.6,
+  "length_ratio": 1.098,
+  "mean_offset_km": 20.43,
+  "median_offset_km": 19.76,
+  "p90_offset_km": 39.81,
+  "max_offset_km": 43.46,
+  "share_model_within_1km": 0.017,
+  "share_model_within_5km": 0.133,
+  "share_reference_within_5km_of_model": 0.153,
+  "model_cost": 4069.7,
+  "cost_surface": "data/processed/validation (costs.yaml)",
+  "biased": false,
+  "share_reference_inside_1%_corridor": 0.175,
+  "share_reference_inside_3%_corridor": 0.374
+}
