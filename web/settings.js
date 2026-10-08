@@ -6,6 +6,7 @@ import {
   ABOUT_TEXT, ARCGIS_GLOSSARY, GROUPS, GROUP_RULE_HELP, LAYERS, PARAMETERS, WEIGHT_SCALE_HELP,
 } from "./engine/labels.js";
 import { EXPERIMENTS } from "./engine/experiments.js";
+import { initModelUi } from "./model_ui.js";
 import {
   defaultScenario, describeChanges, loadLocal, reconcile, saveLocal, sitesFromCsv, sitesToCsv,
 } from "./engine/scenario.js";
@@ -580,9 +581,12 @@ function buildPanel() {
   document.querySelector(".workspace").append(panel);
 }
 
+const panelOpenListeners = new Set();
+
 function togglePanel(open) {
   const panel = document.getElementById("settings-panel");
   const isOpen = open ?? !panel.classList.contains("open");
+  if (isOpen) for (const listener of panelOpenListeners) listener();
   panel.classList.toggle("open", isOpen);
   document.getElementById("settings-toggle").setAttribute("aria-expanded", String(isOpen));
   if (!isOpen) stopAddingSite();
@@ -621,12 +625,17 @@ async function init() {
   updateRunEstimate();
   toggle.addEventListener("click", () => togglePanel());
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") stopAddingSite(); });
-  const attach = () => window.co2Map.on("click", handleMapClick);
-  if (window.co2Map) attach();
-  else window.addEventListener("co2map-ready", attach, { once: true });
   window.co2Settings = {
     currentScenario, onScenarioChange, markResultsCurrent, togglePanel, recordAccumulationSeconds,
+    config: () => state.config,
+    onPanelOpen: (listener) => panelOpenListeners.add(listener),
   };
+  const attach = () => {
+    window.co2Map.on("click", handleMapClick);
+    initModelUi(window.co2Settings);
+  };
+  if (window.co2Map) attach();
+  else window.addEventListener("co2map-ready", attach, { once: true });
 }
 
 init();

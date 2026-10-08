@@ -339,3 +339,26 @@ button.danger { color: #b3261e; border-color: #e6b8b5; }
 .wiki-body th, .wiki-body td { border: 1px solid #dde5e3; padding: 4px 6px; text-align: left; vertical-align: top; }
 .wiki-body code { background: #f1f5f4; padding: 0 3px; border-radius: 3px; }
 .wiki-body pre { background: #f1f5f4; padding: 8px; overflow-x: auto; }
+
+/* ---- Scenario results and hover explanation ---------------------------- */
+.scenario-results { padding: 8px 16px; border-top: 1px solid #d7dfdd; max-height: 34vh; overflow-y: auto; font-size: 0.84rem; }
+.scenario-results h3 { margin: 4px 0; font-size: 0.95rem; }
+.result-toggles { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 6px 0; }
+.result-table { width: 100%; border-collapse: collapse; }
+.result-table th, .result-table td { text-align: left; padding: 3px 4px; border-bottom: 1px solid #eef2f1; vertical-align: top; }
+.result-table tr.changed { background: #fff3e0; }
+.hover-toggle {
+  position: absolute; top: 10px; left: 10px; z-index: 3;
+  padding: 6px 10px; border-radius: 6px; border: 1px solid #c9d4d1;
+  background: #fff; font-size: 0.82rem; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,.15);
+}
+.hover-toggle.active { background: #1f6f5c; color: #fff; border-color: #1f6f5c; }
+.cost-explain {
+  position: absolute; left: 10px; bottom: 34px; z-index: 3; max-width: 360px;
+  padding: 8px 10px; border-radius: 6px; background: rgba(255,255,255,.96);
+  box-shadow: 0 2px 10px rgba(0,0,0,.18); font-size: 0.8rem; line-height: 1.45; pointer-events: none;
+}
+.cost-explain .explain-head { font-weight: 700; font-size: 0.9rem; margin-bottom: 2px; }
+.cost-explain .explain-head.blocked { color: #b3261e; }
+.cost-explain .explain-facts { margin-top: 4px; padding-top: 4px; border-top: 1px solid #e3e9e7; color: #44524e; }
+.cost-explain .muted { color: #66746f; }

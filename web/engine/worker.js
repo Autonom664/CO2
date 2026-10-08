@@ -3,12 +3,13 @@
 // map stays responsive. Messages: load, run, explain, corridor.
 
 import { browserReader, loadPack } from "./pack.js";
-import { cellCost, computeCost } from "./cost.js";
+import { cellCost, computeCost, prepareModel, prepareScales } from "./cost.js";
 import { accumulate, nearestPassable, traceback } from "./paths.js";
 import { fromUtm32, toUtm32 } from "./utm.js";
 
 let pack = null;
-let current = null; // { scenario, cost, model, scales, sites, routes }
+let current = null; // last run: { scenario, cost, model, scales, sites }
+let explainModel = null; // { key, model, scales } for hover, follows the live settings
 
 const post = (message, transfer) => self.postMessage(message, transfer || []);
 
@@ -173,16 +174,22 @@ async function run({ scenario, network, maxSnapM }) {
   });
 }
 
-function explain({ lon, lat, requestId }) {
-  if (!current) return post({ type: "explain", requestId, available: false });
+// Hover explanations follow the settings as they are now, even before Run.
+function explain({ lon, lat, requestId, scenario }) {
+  if (!pack) return post({ type: "explain", requestId, available: false });
+  const key = JSON.stringify([scenario.params, scenario.layers, scenario.groups]);
+  if (!explainModel || explainModel.key !== key) {
+    const model = prepareModel(pack, scenario);
+    explainModel = { key, model, scales: prepareScales(pack, model) };
+  }
   const cell = cellAt(lon, lat);
   if (cell < 0) return post({ type: "explain", requestId, available: true, outside: true });
-  const result = cellCost(pack, current.model, current.scales, cell, true);
+  const result = cellCost(pack, explainModel.model, explainModel.scales, cell, true);
   post({
     type: "explain", requestId, available: true,
     cost: Number.isFinite(result.cost) ? result.cost : null,
     costScale: pack.grid.cost_scale,
-    openLand: current.model.openLand,
+    openLand: explainModel.model.openLand,
     blocked: result.blocked,
     steps: result.steps ? [...result.steps] : [],
     context: result.steps?.context || null,
