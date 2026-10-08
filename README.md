@@ -60,20 +60,35 @@ routing for CO₂ infrastructure. The in-app **Learn** tab and the
 
 ## Quick start
 
-You need Python 3.11+ (Conda recommended) and about 25 GB of free disk
-space for the raw data.
+You need Python 3.11+ and about 25 GB of free disk space for the raw data.
 
+The Conda recipe is available, but its dependency versions are not pinned.
 ```bash
 conda env create -f environment.yml
 conda activate co2-routing
+```
 
+For a pip environment with direct dependency versions pinned (validated on
+Windows with Python 3.13.5), create a virtual environment and install
+`requirements.txt`:
+
+```powershell
+py -3.13 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Then run the project:
+
+```bash
 python -m src.acquire_data           # download and prepare the sources (hours, the first time)
 python -m src.cost_surface           # 100 m cost surface (about 4 min)
 python -m src.routing                # routes and network (about 4 min)
 python -m src.corridors              # near-optimal corridors (about 4 min)
 python -m src.export_model           # 250 m model pack for the browser
 python -m src.build_web              # static map in web/ (about 5 min)
+python -m src.export_arcgis          # ArcGIS starter kit (optional)
 python -m validation.check_outputs   # sanity checks
+python -m validation.check_starter_kit  # if you exported the kit
 
 python -m http.server 8000 --directory web   # then open http://localhost:8000
 ```
