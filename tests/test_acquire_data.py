@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from email.message import Message
 from pathlib import Path
 from urllib.error import HTTPError
@@ -197,6 +198,24 @@ class WfsDownloadTests(unittest.TestCase):
             }
         ).encode("utf-8")
 
+    @staticmethod
+    def gml_page(identifiers: list[int], matched: int) -> bytes:
+        members = "".join(
+            "<wfs:member><t:feature gml:id=\"feature.{identifier}\">"
+            "<t:geom><gml:Point srsName=\"urn:ogc:def:crs:EPSG::25832\">"
+            "<gml:pos>500000 6200000</gml:pos></gml:Point></t:geom>"
+            "</t:feature></wfs:member>".format(identifier=identifier)
+            for identifier in identifiers
+        )
+        body = (
+            '<wfs:FeatureCollection xmlns:wfs="http://www.opengis.net/wfs/2.0" '
+            'xmlns:gml="http://www.opengis.net/gml/3.2" xmlns:t="urn:test" '
+            f'numberMatched="{matched}" '
+            f'numberReturned="{len(identifiers)}">{members}'
+            "</wfs:FeatureCollection>"
+        )
+        return body.encode("utf-8")
+
     def test_downloads_all_pages_using_start_index(self) -> None:
         pages = [
             self.geojson_page([1, 2]),
@@ -297,6 +316,187 @@ class WfsDownloadTests(unittest.TestCase):
             self.assertNotIn(api_key.encode("utf-8"), saved_page)
             self.assertNotIn(b"next=", saved_page)
             self.assertNotIn(api_key, marker)
+
+    def test_retries_transient_authenticated_http_400(self) -> None:
+        response_body = self.gml_page([1], matched=1)
+        attempts = 0
+        sleeps: list[int] = []
+
+        def open_page(request, timeout):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise HTTPError(
+                    request.full_url, 400, "Bad Request", Message(), None
+                )
+            return io.BytesIO(response_body)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch("src.acquire_data.ROOT", root),
+                patch("src.acquire_data.RAW", root / "data" / "raw"),
+                patch("src.acquire_data.WFS_PAGE_SIZE", 2),
+                patch(
+                    "src.acquire_data.time.sleep",
+                    side_effect=lambda delay: sleeps.append(delay),
+                ),
+                patch("src.acquire_data.urllib.request.urlopen", open_page),
+            ):
+                record = download_wfs_source(
+                    "authenticated_sample",
+                    {
+                        "endpoint": "https://example.invalid/wfs",
+                        "typename": "sample:layer",
+                        "crs": "EPSG:25832",
+                        "title": "Sample authenticated layer",
+                        "authenticated": True,
+                    },
+                    False,
+                    "private-value",
+                )
+
+        self.assertIsNotNone(record)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(sleeps, [2])
+        if record is None:
+            self.fail("WFS download returned no manifest record")
+        self.assertEqual(record["feature_count"], 1)
+
+    def test_splits_persistently_failing_authenticated_page(self) -> None:
+        pages = {
+            ("0", "1"): self.gml_page([1], matched=2),
+            ("1", "1"): self.gml_page([2], matched=2),
+            ("2", "2"): self.gml_page([], matched=2),
+        }
+        attempts: list[tuple[str, str]] = []
+        sleep_calls: list[int] = []
+
+        def open_page(request, timeout):
+            query = parse_qs(urlsplit(request.full_url).query)
+            key = (query["startIndex"][0], query["count"][0])
+            attempts.append(key)
+            if key == ("0", "2"):
+                raise HTTPError(
+                    request.full_url, 400, "Bad Request", Message(), None
+                )
+            return io.BytesIO(pages[key])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch("src.acquire_data.ROOT", root),
+                patch("src.acquire_data.RAW", root / "data" / "raw"),
+                patch("src.acquire_data.WFS_PAGE_SIZE", 2),
+                patch(
+                    "src.acquire_data.time.sleep",
+                    side_effect=lambda delay: sleep_calls.append(delay),
+                ),
+                patch("src.acquire_data.urllib.request.urlopen", open_page),
+            ):
+                record = download_wfs_source(
+                    "authenticated_sample",
+                    {
+                        "endpoint": "https://example.invalid/wfs",
+                        "typename": "sample:layer",
+                        "crs": "EPSG:25832",
+                        "title": "Sample authenticated layer",
+                        "authenticated": True,
+                    },
+                    False,
+                    "private-value",
+                )
+
+        self.assertIsNotNone(record)
+        self.assertEqual(attempts[:4], [("0", "2")] * 4)
+        self.assertEqual(attempts[4:], [("0", "1"), ("1", "1"), ("2", "2")])
+        self.assertEqual(sleep_calls, [2, 5, 10])
+        if record is None:
+            self.fail("WFS download returned no manifest record")
+        self.assertEqual(record["feature_count"], 2)
+        self.assertEqual(record["page_count"], 2)
+
+    def test_deduplicates_gml_ids_and_checks_number_matched(self) -> None:
+        pages = [
+            self.gml_page([1, 2], matched=3),
+            self.gml_page([2, 3], matched=3),
+            self.gml_page([], matched=3),
+        ]
+
+        def open_page(request, timeout):
+            return io.BytesIO(pages.pop(0))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch("src.acquire_data.ROOT", root),
+                patch("src.acquire_data.RAW", root / "data" / "raw"),
+                patch("src.acquire_data.WFS_PAGE_SIZE", 2),
+                patch("src.acquire_data.urllib.request.urlopen", open_page),
+            ):
+                record = download_wfs_source(
+                    "authenticated_sample",
+                    {
+                        "endpoint": "https://example.invalid/wfs",
+                        "typename": "sample:layer",
+                        "crs": "EPSG:25832",
+                        "title": "Sample authenticated layer",
+                        "authenticated": True,
+                    },
+                    False,
+                    "private-value",
+                )
+
+            source_dir = (
+                root / "data" / "raw" / "phase-b" / "authenticated_sample"
+            )
+            saved_pages = sorted(source_dir.glob("page_*.gml"))
+            saved_ids = []
+            for path in saved_pages:
+                page_root = ET.parse(path).getroot()
+                saved_ids.extend(
+                    feature.attrib["{http://www.opengis.net/gml/3.2}id"]
+                    for member in page_root
+                    if member.tag.rsplit("}", 1)[-1] == "member"
+                    for feature in member
+                )
+
+        self.assertIsNotNone(record)
+        if record is None:
+            self.fail("WFS download returned no manifest record")
+        self.assertEqual(record["feature_count"], 3)
+        self.assertEqual(len(saved_ids), 3)
+        self.assertEqual(len(set(saved_ids)), 3)
+
+    def test_rejects_gml_count_below_number_matched(self) -> None:
+        pages = [self.gml_page([1, 2], matched=3), self.gml_page([], matched=3)]
+
+        def open_page(request, timeout):
+            return io.BytesIO(pages.pop(0))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch("src.acquire_data.ROOT", root),
+                patch("src.acquire_data.RAW", root / "data" / "raw"),
+                patch("src.acquire_data.WFS_PAGE_SIZE", 2),
+                patch("src.acquire_data.urllib.request.urlopen", open_page),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "expected 3 unique features from numberMatched"
+                ):
+                    download_wfs_source(
+                        "authenticated_sample",
+                        {
+                            "endpoint": "https://example.invalid/wfs",
+                            "typename": "sample:layer",
+                            "crs": "EPSG:25832",
+                            "title": "Sample authenticated layer",
+                            "authenticated": True,
+                        },
+                        False,
+                        "private-value",
+                    )
 
     def test_surfaces_non_retryable_http_errors_without_saving_partial_pages(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

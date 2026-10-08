@@ -448,6 +448,73 @@ def sanitize_wfs_page(
     return sanitized, count
 
 
+def _wfs_number_matched(content: bytes) -> int | None:
+    trimmed = content.lstrip(b"\xef\xbb\xbf \t\r\n")
+    if trimmed.startswith(b"{"):
+        payload = json.loads(trimmed)
+        value = payload.get("numberMatched")
+    else:
+        root = ET.fromstring(content)
+        value = next(
+            (
+                attribute
+                for name, attribute in root.attrib.items()
+                if name.rsplit("}", 1)[-1].casefold() == "numbermatched"
+            ),
+            None,
+        )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _deduplicate_gml_members(
+    content: bytes, seen_ids: set[str]
+) -> tuple[bytes, int, int]:
+    root = ET.fromstring(content)
+    members = [
+        child
+        for child in root
+        if child.tag.rsplit("}", 1)[-1].casefold() == "member"
+    ]
+    unique_count = 0
+    for member in members:
+        feature = next(iter(member), None)
+        if feature is None:
+            raise ValueError("WFS GML member contains no feature")
+        feature_id = next(
+            (
+                value
+                for name, value in feature.attrib.items()
+                if name.startswith("{http://www.opengis.net/gml/")
+                and name.rsplit("}", 1)[-1].casefold() == "id"
+            ),
+            None,
+        )
+        if not feature_id:
+            raise ValueError("WFS GML feature is missing its gml:id")
+        if feature_id in seen_ids:
+            root.remove(member)
+            continue
+        seen_ids.add(feature_id)
+        unique_count += 1
+
+    raw_count = len(members)
+    for name in list(root.attrib):
+        if name.rsplit("}", 1)[-1].casefold() == "numberreturned":
+            root.attrib[name] = str(unique_count)
+            break
+    else:
+        root.attrib["numberReturned"] = str(unique_count)
+    return (
+        ET.tostring(root, encoding="utf-8", xml_declaration=True),
+        raw_count,
+        unique_count,
+    )
+
+
 def download_wfs_source(
     source_key: str,
     source: dict[str, Any],
@@ -484,14 +551,17 @@ def download_wfs_source(
     page_count = 0
     feature_count = 0
     offset = 0
-    while True:
+    seen_ids: set[str] = set()
+    matched_count: int | None = None
+
+    def fetch_page(page_offset: int, page_size: int) -> list[tuple[bytes, int]]:
         params = {
             "service": "WFS",
             "version": "2.0.0",
             "request": "GetFeature",
             "typeNames": source["typename"],
-            "count": str(WFS_PAGE_SIZE),
-            "startIndex": str(offset),
+            "count": str(page_size),
+            "startIndex": str(page_offset),
             "srsName": source["crs"],
         }
         if not source.get("authenticated"):
@@ -504,60 +574,140 @@ def download_wfs_source(
         )
 
         response_content: bytes | None = None
-        for attempt in range(4):
+        retry_delays = (2, 5, 10)
+        for attempt in range(len(retry_delays) + 1):
             try:
                 with urllib.request.urlopen(request, timeout=120) as response:
                     response_content = response.read()
                 break
             except urllib.error.HTTPError as error:
                 status = error.code
-                if status not in {401, 429} or attempt == 3:
+                retryable = (
+                    status in {401, 429}
+                    or 500 <= status < 600
+                    or (status == 400 and source.get("authenticated"))
+                )
+                if not retryable:
                     raise RuntimeError(
                         f"WFS download failed for {source_key} at feature "
-                        f"{offset}: HTTP {status}"
+                        f"{page_offset}: HTTP {status}"
                     ) from None
-                time.sleep(5 * (2**attempt))
+                if attempt < len(retry_delays):
+                    LOG.warning(
+                        "Retrying %s WFS page at feature %s after HTTP %s",
+                        source_key,
+                        page_offset,
+                        status,
+                    )
+                    time.sleep(retry_delays[attempt])
+                    continue
+                if status == 400 and source.get("authenticated") and page_size > 1:
+                    first_size = page_size // 2
+                    LOG.warning(
+                        "Splitting %s WFS page at feature %s after repeated "
+                        "HTTP 400 responses",
+                        source_key,
+                        page_offset,
+                    )
+                    first_pages = fetch_page(page_offset, first_size)
+                    first_count = sum(returned for _, returned in first_pages)
+                    if first_count < first_size:
+                        return first_pages
+                    return first_pages + fetch_page(
+                        page_offset + first_size, page_size - first_size
+                    )
+                raise RuntimeError(
+                    f"WFS download failed for {source_key} at feature "
+                    f"{page_offset}: HTTP {status}"
+                ) from None
             except (urllib.error.URLError, TimeoutError, OSError) as error:
                 raise RuntimeError(
                     f"WFS download failed for {source_key} at feature "
-                    f"{offset}: {type(error).__name__}"
+                    f"{page_offset}: {type(error).__name__}"
                 ) from None
         if response_content is None:
             raise RuntimeError(
                 f"WFS download returned no response for {source_key} at "
-                f"feature {offset}"
+                f"feature {page_offset}"
             )
 
         sanitized, returned = sanitize_wfs_page(
             response_content,
             api_key if source.get("authenticated") else None,
         )
-        frame = gpd.read_file(io.BytesIO(sanitized))
-        if returned >= 0 and len(frame) != returned:
-            raise ValueError(
-                f"WFS page count mismatch for {source_key} at feature {offset}: "
-                f"response reports {returned}, parser read {len(frame)}"
-            )
-        returned = len(frame)
-        if returned == 0:
-            break
+        if returned < 0:
+            returned = len(gpd.read_file(io.BytesIO(sanitized)))
+        return [(sanitized, returned)]
 
-        extension = "gml" if source.get("authenticated") else "geojson"
-        page_path = source_dir / f"page_{page_count:05d}.{extension}"
-        page_path.write_bytes(sanitized)
-        page_count += 1
-        feature_count += returned
-        offset += returned
+    while True:
+        raw_page_count = 0
+        for sanitized, reported_count in fetch_page(offset, WFS_PAGE_SIZE):
+            number_matched = _wfs_number_matched(sanitized)
+            if number_matched is not None:
+                if matched_count is not None and matched_count != number_matched:
+                    raise ValueError(
+                        f"WFS numberMatched changed for {source_key}: "
+                        f"{matched_count} to {number_matched}"
+                    )
+                matched_count = number_matched
+
+            if source.get("authenticated"):
+                sanitized, raw_count, unique_count = _deduplicate_gml_members(
+                    sanitized, seen_ids
+                )
+                if reported_count >= 0 and raw_count != reported_count:
+                    raise ValueError(
+                        f"WFS page count mismatch for {source_key} at feature "
+                        f"{offset + raw_page_count}: response reports "
+                        f"{reported_count}, page contains {raw_count} features"
+                    )
+                returned = raw_count
+            else:
+                frame = gpd.read_file(io.BytesIO(sanitized))
+                if reported_count >= 0 and len(frame) != reported_count:
+                    raise ValueError(
+                        f"WFS page count mismatch for {source_key} at feature "
+                        f"{offset + raw_page_count}: response reports "
+                        f"{reported_count}, parser read {len(frame)}"
+                    )
+                returned = len(frame)
+                unique_count = returned
+
+            raw_page_count += returned
+            if unique_count:
+                if source.get("authenticated"):
+                    frame = gpd.read_file(io.BytesIO(sanitized))
+                    if len(frame) != unique_count:
+                        raise ValueError(
+                            f"WFS de-duplicated page count mismatch for "
+                            f"{source_key} at feature {offset + raw_page_count}: "
+                            f"expected {unique_count}, parser read {len(frame)}"
+                        )
+                extension = "gml" if source.get("authenticated") else "geojson"
+                page_path = source_dir / f"page_{page_count:05d}.{extension}"
+                page_path.write_bytes(sanitized)
+                page_count += 1
+                feature_count += unique_count
+
+        if raw_page_count == 0:
+            break
+        offset += raw_page_count
         LOG.info(
             "Downloaded %s: %s features",
             source_key,
             feature_count,
         )
-        if returned < WFS_PAGE_SIZE:
+        if raw_page_count < WFS_PAGE_SIZE:
             break
 
     if not page_count:
         raise ValueError(f"WFS source {source_key} returned no features")
+    if matched_count is not None and feature_count != matched_count:
+        raise ValueError(
+            f"WFS feature count mismatch for {source_key}: expected "
+            f"{matched_count} unique features from numberMatched, got "
+            f"{feature_count}"
+        )
     result = {
         "url": source["endpoint"],
         "typename": source["typename"],
