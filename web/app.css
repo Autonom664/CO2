@@ -326,3 +326,16 @@ button.danger { color: #b3261e; border-color: #e6b8b5; }
 .inline-details summary { cursor: pointer; color: #1f6f5c; margin-top: 4px; }
 .inline-details p { margin: 4px 0; }
 .settings-footer #settings-run-status { font-size: 0.8rem; }
+.experiment { padding: 8px 10px; margin: 6px 0; border: 1px solid #e3e9e7; border-radius: 6px; }
+.experiment p { margin: 2px 0 4px; }
+.experiment button { margin-top: 4px; }
+.wiki-links { padding-left: 18px; line-height: 1.7; }
+.wiki-dialog { width: min(860px, 94vw); max-height: 88vh; padding: 0; border: none; border-radius: 8px; }
+.wiki-dialog::backdrop { background: rgba(10, 25, 22, 0.45); }
+.wiki-close { position: sticky; top: 0; display: flex; justify-content: flex-end; padding: 8px; background: #fff; }
+.wiki-close button { border: none; background: none; font-size: 1.1rem; cursor: pointer; }
+.wiki-body { padding: 0 28px 24px; font-size: 0.92rem; line-height: 1.55; }
+.wiki-body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.85rem; }
+.wiki-body th, .wiki-body td { border: 1px solid #dde5e3; padding: 4px 6px; text-align: left; vertical-align: top; }
+.wiki-body code { background: #f1f5f4; padding: 0 3px; border-radius: 3px; }
+.wiki-body pre { background: #f1f5f4; padding: 8px; overflow-x: auto; }

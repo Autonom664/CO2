@@ -5,6 +5,7 @@
 import {
   ABOUT_TEXT, ARCGIS_GLOSSARY, GROUPS, GROUP_RULE_HELP, LAYERS, PARAMETERS, WEIGHT_SCALE_HELP,
 } from "./engine/labels.js";
+import { EXPERIMENTS } from "./engine/experiments.js";
 import {
   defaultScenario, describeChanges, loadLocal, reconcile, saveLocal, sitesFromCsv, sitesToCsv,
 } from "./engine/scenario.js";
@@ -24,6 +25,7 @@ const TABS = [
   ["sites", "Sites"],
   ["sensitivity", "Sensitivity"],
   ["scenarios", "Scenarios"],
+  ["learn", "Learn"],
   ["help", "Help"],
 ];
 
@@ -366,9 +368,77 @@ function helpTab() {
   ];
 }
 
+const WIKI_PAGES = [
+  ["README.md", "Start here"],
+  ["method.md", "How the routing works"],
+  ["weights.md", "Every weight, and why"],
+  ["sources.md", "Data sources"],
+  ["data_preparation.md", "Data preparation"],
+  ["arcgis_recipe.md", "Rebuild it in ArcGIS Pro"],
+  ["experiments.md", "Experiments"],
+  ["decisions.md", "Design decisions"],
+  ["validation.md", "Validation against Baltic Pipe"],
+];
+
+let markedModule = null;
+async function renderMarkdown(text) {
+  markedModule ??= await import("https://unpkg.com/marked@12.0.2/lib/marked.esm.js");
+  return markedModule.marked.parse(text);
+}
+
+async function openWikiPage(file, title) {
+  const dialog = document.getElementById("wiki-dialog") || document.body.appendChild(
+    element("dialog", { id: "wiki-dialog", class: "wiki-dialog" },
+      element("form", { method: "dialog", class: "wiki-close" }, element("button", { "aria-label": "Close" }, "✕")),
+      element("article", { id: "wiki-body", class: "wiki-body" })));
+  const body = document.getElementById("wiki-body");
+  body.textContent = `Loading ${title}…`;
+  dialog.showModal();
+  try {
+    const response = await fetch(`wiki/${file}`, { cache: "no-cache" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    // The wiki is our own Markdown, written in this repository.
+    body.innerHTML = await renderMarkdown(await response.text());
+    for (const link of body.querySelectorAll("a[href$='.md']")) {
+      const target = link.getAttribute("href");
+      if (target.includes("/")) continue;
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        openWikiPage(target, link.textContent);
+      });
+    }
+  } catch (error) {
+    body.textContent = `This page is not available yet (${error.message}).`;
+  }
+}
+
+function learnTab() {
+  const experiments = EXPERIMENTS.map((experiment) => element("div", { class: "experiment" },
+    element("strong", {}, experiment.title),
+    element("p", { class: "muted" }, experiment.question),
+    element("details", {}, element("summary", {}, "What to look for"), element("p", {}, experiment.lookFor)),
+    element("button", { type: "button", onclick: () => {
+      experiment.apply(state.scenario);
+      state.scenario.name = `Experiment: ${experiment.title}`;
+      changed();
+      refreshSiteMarkers();
+      document.getElementById("settings-stale").scrollIntoView({ behavior: "smooth" });
+    } }, "Try it")));
+  return [
+    element("p", {}, "The best way to understand a least-cost model is to change it and see what moves. " +
+      "Each experiment changes your current settings; press Run afterwards. " +
+      "Scenarios → Reset to published takes you back."),
+    element("h3", {}, "Wiki"),
+    element("ul", { class: "wiki-links" }, ...WIKI_PAGES.map(([file, title]) => element("li", {},
+      element("a", { href: `wiki/${file}`, onclick: (event) => { event.preventDefault(); openWikiPage(file, title); } }, title)))),
+    element("h3", {}, "Try this"),
+    ...experiments,
+  ];
+}
+
 const RENDERERS = {
   layers: layersTab, model: modelTab, sites: sitesTab,
-  sensitivity: sensitivityTab, scenarios: scenariosTab, help: helpTab,
+  sensitivity: sensitivityTab, scenarios: scenariosTab, learn: learnTab, help: helpTab,
 };
 let activeTab = "layers";
 

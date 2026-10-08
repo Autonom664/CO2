@@ -526,8 +526,24 @@ def build_web(
         (output_dir / "SOURCES.md").write_text(
             source_register.read_text(encoding="utf-8"), encoding="utf-8"
         )
+    publish_wiki(ROOT / "docs" / "wiki", output_dir / "wiki")
     LOG.info("Static map data written to %s", output_dir)
     return output_dir
+
+
+def publish_wiki(source: Path, destination: Path) -> None:
+    """Copy the Markdown wiki for the in-app Learn tab; stale pages are removed."""
+    if not source.is_dir():
+        return
+    destination.mkdir(parents=True, exist_ok=True)
+    pages = {page.name for page in source.glob("*.md")}
+    for old in destination.glob("*.md"):
+        if old.name not in pages:
+            old.unlink()
+    for name in sorted(pages):
+        (destination / name).write_text(
+            (source / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
 
 
 def main() -> None:

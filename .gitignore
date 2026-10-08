@@ -38,3 +38,4 @@ data/processed/validation/
 # Docker builds from the working tree, so these are not needed in git.
 web/data/
 web/SOURCES.md
+web/wiki/
