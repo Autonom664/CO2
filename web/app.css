@@ -362,3 +362,5 @@ button.danger { color: #b3261e; border-color: #e6b8b5; }
 .cost-explain .explain-head.blocked { color: #b3261e; }
 .cost-explain .explain-facts { margin-top: 4px; padding-top: 4px; border-top: 1px solid #e3e9e7; color: #44524e; }
 .cost-explain .muted { color: #66746f; }
+.scenario-results .muted { color: #55635f; }
+.scenario-results details.notice summary { cursor: pointer; }

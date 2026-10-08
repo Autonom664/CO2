@@ -185,10 +185,13 @@ function renderSummary(result, name) {
   box.hidden = false;
   box.innerHTML = `
     <h3>Results: ${name}</h3>
-    <p class="muted">Orange: your scenario (250 m). The published 100 m routes stay on the map for comparison.
+    <p class="muted">Orange: your best routes (dashed: other options). Magenta: your network. Both at 250 m;
+    the published 100 m routes and network stay on the map for comparison.
     ${changedCount ? `<strong>${changedCount} source${changedCount > 1 ? "s" : ""} changed their best storage site.</strong>`
       : "Every source keeps its published best storage site."}</p>
-    ${result.problems.length ? `<p class="notice">${result.problems.join("<br>")}</p>` : ""}
+    ${result.problems.length ? `<details class="notice"><summary>${result.problems.length} site${
+      result.problems.length > 1 ? "s were" : " was"} left out (click for details)</summary>${
+      result.problems.map((line) => `<div>${line}</div>`).join("")}</details>` : ""}
     <div class="result-toggles">
       <label><input type="checkbox" data-layers="scenario-routes-best" checked> Best routes</label>
       <label><input type="checkbox" data-layers="scenario-routes-other"> All options</label>
@@ -266,7 +269,10 @@ function showExplanation(data) {
   if (c) {
     const facts = [];
     facts.push(c.isLand ? "Land" : "Sea");
-    if (c.buildingDistance !== null) facts.push(c.buildingDistance === 0 ? "buildings in this cell" : `nearest building ${fmt(c.buildingDistance, 0)} m`);
+    if (c.buildingDistance !== null) {
+      facts.push(c.buildingDistance === 0 ? "a built-up cell"
+        : `nearest built-up cell (half or more buildings) ${fmt(c.buildingDistance, 0)} m`);
+    }
     if (c.buildingShare > 0) facts.push(`${fmt(c.buildingShare * 100, 0)}% built over`);
     if (c.population1km !== null && c.population1km > 0) facts.push(`${fmt(c.population1km, 0)} people within 1 km`);
     if (c.landfall) facts.push("coastline cell");

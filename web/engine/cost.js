@@ -126,21 +126,32 @@ function combine(values, rule) {
   return rule === "sum" ? values.reduce((a, b) => a + b, 0) : Math.max(...values);
 }
 
+// Land that routes may enter: not outside, not built over, not a barrier.
+function isTraversableLand(pack, model, cell) {
+  if (!bitSet(pack, cell, model.derived.land.bit)) return false;
+  if (model.buildingThreshold > 0 && pack.buildingsShare[cell] >= model.buildingThreshold) return false;
+  for (const layer of model.barrierLayers) if (bitSet(pack, cell, layer.bit)) return false;
+  return true;
+}
+
 /**
  * Per-cell inputs that need the whole grid (quantile scales), computed once
- * per scenario: population and population-risk scale tables.
+ * per scenario: population and population-risk scale tables. Quantiles are
+ * taken over traversable land only, as in validation/model_parity.py.
  */
 export function prepareScales(pack, model) {
   const { p } = model;
   const n = pack.grid.width * pack.grid.height;
-  const land = model.derived.land.bit;
+  const traversable = new Uint8Array(n);
+  for (let cell = 0; cell < n; cell++) traversable[cell] = isTraversableLand(pack, model, cell) ? 1 : 0;
   const scales = {};
   if (p.population.enabled) {
-    const threshold = p.population.min_per_cell * (pack.grid.resolution_m / 100) ** 2;
+    const reference = pack.config.costs.population?.reference_cell_resolution_m ?? 100;
+    const threshold = p.population.min_per_cell * (pack.grid.resolution_m / reference) ** 2;
     const values = [];
     for (let cell = 0; cell < n; cell++) {
       const v = pack.population[cell];
-      if (v !== pack.floatNodata && v > 0 && v >= threshold && bitSet(pack, cell, land)) values.push(v);
+      if (traversable[cell] && v !== pack.floatNodata && v > 0 && v >= threshold) values.push(v);
     }
     scales.populationThreshold = threshold;
     if (values.length) {
@@ -152,7 +163,7 @@ export function prepareScales(pack, model) {
     const values = [];
     for (let cell = 0; cell < n; cell++) {
       const v = pack.population1km[cell];
-      if (v !== pack.floatNodata && v > p.population_risk.threshold_people && bitSet(pack, cell, land)) values.push(v);
+      if (traversable[cell] && v !== pack.floatNodata && v > p.population_risk.threshold_people) values.push(v);
     }
     if (values.length) {
       const count = pack.config.costs.population_risk?.quantiles ?? 5;
