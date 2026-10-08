@@ -125,6 +125,8 @@ def report(name: str, problems: list[str]) -> bool:
 
 
 def main() -> int:
+    # The Windows console defaults to cp1252, which cannot print ≥ or →.
+    sys.stdout.reconfigure(encoding="utf-8")
     processed = routing.PROCESSED
     config = routing.load_config(routing.CONFIG_FILE)
     resolution = int(config["grid"]["resolution_m"])
