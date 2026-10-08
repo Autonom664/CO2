@@ -6,7 +6,7 @@ services:
     container_name: co2-map
     restart: unless-stopped
     ports:
-      - "127.0.0.1:18080:8080"
+      - "${CO2_MAP_BIND:-127.0.0.1:18080}:8080"
     read_only: true
     tmpfs:
       - /var/cache/nginx

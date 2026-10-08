@@ -12,15 +12,18 @@ From the repository root, with the project Python environment active:
 
 ```powershell
 python -m src.cost_surface
+python -m src.routing
+python -m src.corridors
 python -m src.build_web
+python -m validation.check_outputs
 ```
 
-The routing command requires the expert-approved
-`data/input/hotspots.csv`. If it is not supplied, the site still builds with
-the input layers and cost surface, and it explicitly reports that routes are
-not available. After the expert approves and supplies the CSV, run
-`python -m src.routing` and then rebuild the site. Do not deploy placeholder
-hotspot coordinates.
+The validation command must pass before deployment. Optionally run
+`validation/ui_smoke.py` against the local site; it requires Playwright.
+
+Compose binds the site to `127.0.0.1:18080` by default. Override
+`CO2_MAP_BIND` to change the host binding, for example
+`CO2_MAP_BIND=0.0.0.0:8080` when direct external binding is intended.
 
 Review `web/data/map.json` and test the site locally before deployment:
 
@@ -38,8 +41,8 @@ Use the OVH host with the largest available **RAM and CPU capacity** for
 building routes and assets; the static web container itself is light. Check
 the actual inventory in the OVH control panel rather than assuming a product
 name or server address. On an Ubuntu host with Docker Engine and the Compose
-plugin, first confirm ports `18080` and `80` are available. If port `80` is
-already handled by an existing reverse proxy, keep that proxy and add the
+plugin, first confirm the selected bind port and port `80` are available. If
+port `80` is already handled by an existing reverse proxy, keep that proxy and add the
 `co2.michaelbinger.dk` virtual host to it.
 
 Copy the repository's `web/`, `Dockerfile`, `docker-compose.yml`, and
@@ -64,17 +67,23 @@ docker compose down
 Install the provided
 [`nginx-co2.michaelbinger.dk.conf`](./nginx-co2.michaelbinger.dk.conf) in the
 host's Nginx configuration (or translate its proxy target into the existing
-proxy manager), then test and reload Nginx. Configure the domain's A record to
-the OVH host's public IPv4 address; add an AAAA record only if IPv6 is
+proxy manager), then test and reload Nginx. Confirm that the domain's existing
+DNS record resolves to the chosen host; add an AAAA record only if IPv6 is
 configured and reachable. After DNS resolves, issue a TLS certificate with
 the host's existing certificate manager or Certbot and redirect HTTP to
 HTTPS.
 
-No DNS changes, OVH account access, or server changes have been made. Before
-adding the DNS record, confirm the chosen host's public IP, that its proxy
-configuration is live, and that the user wants the record changed. The exact
-record to add will be `co2` → the confirmed OVH server address.
+These local deployment instructions make no DNS, OVH account, or server
+changes. Do not modify DNS without explicit confirmation.
 
-The current deploy configuration is intentionally minimal for a short-lived
-demo. Keep the `web/` build output and the repo's `data/raw/` source archives
+Keep the `web/` build output and the repo's `data/raw/` source archives
 separate; only the former is copied to the web server.
+
+To roll back the OVH Compose service and virtual host:
+
+```sh
+sudo docker compose -f /opt/co2-map/docker-compose.yml down
+sudo rm /etc/nginx/sites-enabled/co2.michaelbinger.dk
+sudo nginx -t
+sudo systemctl reload nginx
+```
