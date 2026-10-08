@@ -55,6 +55,9 @@ CLASS_PROPERTIES = {
     "natura2000": "km_natura2000",
     "protected_nature": "km_protected_nature",
     "population": "km_population",
+    "fredskov": "km_fredskov",
+    "landfall": "km_landfall",
+    "population_risk": "km_population_risk",
 }
 
 
@@ -93,6 +96,8 @@ def load_hotspots(
     valid_cells: np.ndarray,
     resolution: int,
     max_snap_m: float,
+    expected_count: int | None = EXPECTED_HOTSPOTS,
+    bounds: tuple[float, float, float, float] | None = None,
 ) -> list[dict[str, Any]]:
     if not path.exists():
         raise FileNotFoundError(
@@ -108,9 +113,9 @@ def load_hotspots(
                 f"{path} must contain columns: id, name, lon, lat"
             )
         records = list(reader)
-    if len(records) != EXPECTED_HOTSPOTS:
+    if expected_count is not None and len(records) != expected_count:
         raise ValueError(
-            f"Expected {EXPECTED_HOTSPOTS} hotspots, found {len(records)}"
+            f"Expected {expected_count} hotspots, found {len(records)}"
         )
 
     identifiers: set[str] = set()
@@ -134,6 +139,10 @@ def load_hotspots(
         if not (-180 <= lon <= 180 and -90 <= lat <= 90):
             raise ValueError(f"Coordinate outside WGS84 range for {identifier!r}")
         x, y = transformer.transform(lon, lat)
+        if bounds is not None:
+            left, bottom, right, top = bounds
+            if not (left <= x < right and bottom <= y < top):
+                continue
         row, col = rasterio.transform.rowcol(transform, x, y)
         if row < 0 or col < 0 or row >= height or col >= width:
             raise ValueError(
@@ -438,6 +447,18 @@ def route_hotspots(
     config_path: Path = CONFIG_FILE,
 ) -> tuple[Path, Path, Path]:
     config = load_config(config_path)
+    routing_config = config.get("routing", {})
+    path_method = str(routing_config.get("path_method", "MCP_Geometric"))
+    fully_connected = bool(routing_config.get("fully_connected", True))
+    snap_distance_metric = str(
+        routing_config.get("snap_distance_metric", "euclidean")
+    )
+    if path_method != "MCP_Geometric" or not fully_connected:
+        raise ValueError(
+            "Routing requires MCP_Geometric with 8-neighbour connectivity"
+        )
+    if snap_distance_metric != "euclidean":
+        raise ValueError("Hotspot snapping supports Euclidean distance only")
     resolution = int(config["grid"]["resolution_m"])
     cost_path = cost_path or PROCESSED / f"cost_surface_{resolution}m.tif"
     class_path = PROCESSED / f"cost_class_mask_{resolution}m.tif"
@@ -521,7 +542,7 @@ def route_hotspots(
             source_index + 1,
             len(hotspots),
         )
-        mcp = MCP_Geometric(mcp_cost, fully_connected=True)
+        mcp = MCP_Geometric(mcp_cost, fully_connected=fully_connected)
         cumulative, _ = mcp.find_costs(
             [(start["row"], start["col"])],
             ends=[(end["row"], end["col"]) for end in destinations],

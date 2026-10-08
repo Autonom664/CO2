@@ -28,6 +28,7 @@ import geopandas as gpd
 import numpy as np
 import pyogrio
 import rasterio
+import shapely
 import yaml
 from pyproj import Transformer
 from rasterio.enums import Resampling
@@ -1153,6 +1154,14 @@ def clip_vector(
     if frame.crs is None:
         raise ValueError("Vector source has no CRS metadata")
     projected = frame.to_crs(target_crs)
+    geometries = projected.geometry.values
+    invalid = ~shapely.is_valid(geometries) & ~shapely.is_missing(
+        geometries
+    )
+    if invalid.any():
+        projected.loc[invalid, "geometry"] = shapely.make_valid(
+            geometries[invalid], method="structure", keep_collapsed=False
+        )
     intersects = projected.geometry.intersects(mask)
     clipped = projected.loc[intersects].copy()
     if clipped.empty:
@@ -1475,6 +1484,22 @@ def write_gpkg_layer(
         raise ValueError(f"Refusing to write empty layer {layer!r} to {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     prepared = frame
+    used_names: set[str] = set()
+    renamed_fields: dict[str, str] = {}
+    for column in prepared.columns:
+        field_name = str(column)
+        key = field_name.casefold()
+        if key in used_names:
+            suffix = 2
+            candidate = f"{field_name}_{suffix}"
+            while candidate.casefold() in used_names:
+                suffix += 1
+                candidate = f"{field_name}_{suffix}"
+            renamed_fields[field_name] = candidate
+            key = candidate.casefold()
+        used_names.add(key)
+    if renamed_fields:
+        prepared = prepared.rename(columns=renamed_fields)
     geometry_types = {geom_type for geom_type in prepared.geom_type.unique() if geom_type}
     if geometry_types <= {"Polygon", "MultiPolygon"}:
         prepared = prepared.copy()
@@ -2234,7 +2259,24 @@ def prepare_data(
     manifest: dict[str, dict[str, Any]],
     config_path: Path = CONFIG_FILE,
     layers: set[str] | None = None,
+    resume: str | None = None,
 ) -> None:
+    if resume == "phase_b":
+        extent_path = PROCESSED / "coast_land_water.gpkg"
+        if not extent_path.exists():
+            raise FileNotFoundError(
+                "Phase-B resume requires the completed base extent: "
+                f"{extent_path}"
+            )
+        extent = gpd.read_file(
+            extent_path, layer="analysis_extent"
+        ).to_crs(TARGET_CRS)
+        prepare_phase_b_layers(extent)
+        prepare_storage_areas()
+        write_source_register(manifest)
+        LOG.info("Phase-B resume completed")
+        return
+
     if layers is not None:
         extent_path = PROCESSED / "coast_land_water.gpkg"
         if not extent_path.exists():
@@ -2332,9 +2374,21 @@ def main() -> None:
             "plus major/minor roads. Requires --prepare-only."
         ),
     )
+    parser.add_argument(
+        "--resume",
+        choices=["phase_b"],
+        help=(
+            "Resume only phase B from existing prepared base layers. "
+            "Requires --prepare-only."
+        ),
+    )
     args = parser.parse_args()
     if args.layers and not args.prepare_only:
         parser.error("--layers requires --prepare-only")
+    if args.resume and not args.prepare_only:
+        parser.error("--resume requires --prepare-only")
+    if args.resume and args.layers:
+        parser.error("--resume cannot be combined with --layers")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
@@ -2345,7 +2399,7 @@ def main() -> None:
     else:
         manifest = download_sources(force=args.force)
     if not args.download_only:
-        prepare_data(manifest, args.config, args.layers)
+        prepare_data(manifest, args.config, args.layers, args.resume)
 
 
 if __name__ == "__main__":

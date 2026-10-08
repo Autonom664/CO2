@@ -109,6 +109,33 @@ class RoutingTests(unittest.TestCase):
         self.assertAlmostEqual(route["properties"]["km_open_sea"], 0.141, places=3)
         self.assertEqual(route["properties"]["accumulated_cost"], 2.0)
 
+    def test_route_reads_p12_classes_from_uint64_mask(self) -> None:
+        landfall_bit = 1 << 34
+        risk_bit = 1 << 33
+        classes = np.array([[1, landfall_bit | risk_bit]], dtype=np.uint64)
+
+        route = build_route_feature(
+            {"id": "A", "name": "Alpha", "snap_distance_m": 0},
+            {"id": "B", "name": "Beta", "snap_distance_m": 0},
+            [(0, 0), (0, 1)],
+            2.0,
+            classes,
+            from_origin(0, 100, 100, 100),
+            100,
+            {
+                "open_land": 1,
+                "landfall": landfall_bit,
+                "population_risk": risk_bit,
+            },
+            {
+                "landfall": ["landfall"],
+                "population_risk": ["population_risk"],
+            },
+        )
+
+        self.assertEqual(route["properties"]["km_landfall"], 0.1)
+        self.assertEqual(route["properties"]["km_population_risk"], 0.1)
+
     def test_mst_selects_lowest_cost_edges(self) -> None:
         routes = [
             {"properties": {"from_id": "A", "to_id": "B", "accumulated_cost": 1}},
@@ -169,6 +196,9 @@ class RoutingTests(unittest.TestCase):
             "forest": 65536,
             "dwelling_proximity": 131072,
             "parallel_corridor": 262144,
+            "fredskov": 1 << 32,
+            "population_risk": 1 << 33,
+            "landfall": 1 << 34,
         }
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -193,10 +223,16 @@ class RoutingTests(unittest.TestCase):
             with rasterio.open(
                 processed / "cost_class_mask_100m.tif",
                 "w",
-                **(profile | {"dtype": "uint32", "nodata": 0}),
+                **(profile | {"dtype": "uint64", "nodata": 0}),
             ) as dataset:
                 dataset.write(
-                    np.full((40, 40), class_bits["open_land"], dtype=np.uint32),
+                    np.full(
+                        (40, 40),
+                        class_bits["open_land"]
+                        | class_bits["landfall"]
+                        | class_bits["population_risk"],
+                        dtype=np.uint64,
+                    ),
                     1,
                 )
                 dataset.update_tags(class_bits=json.dumps(class_bits))
@@ -270,6 +306,9 @@ class RoutingTests(unittest.TestCase):
                             "forest": ["forest"],
                             "dwelling_proximity": ["dwelling_proximity"],
                             "parallel_corridor": ["parallel_corridor"],
+                            "landfall": ["landfall"],
+                            "population_risk": ["population_risk"],
+                            "fredskov": ["fredskov"],
                         },
                     }
                 ),
@@ -288,8 +327,10 @@ class RoutingTests(unittest.TestCase):
             routes = gpd.read_file(routes_path)
             self.assertEqual(len(routes), 80)
             self.assertIn("km_dwelling_proximity", routes.columns)
+            self.assertGreater(float(routes.iloc[0]["km_landfall"]), 0)
+            self.assertGreater(float(routes.iloc[0]["km_population_risk"]), 0)
             with rasterio.open(processed / "cost_class_mask_100m.tif") as mask:
-                self.assertEqual(mask.dtypes[0], "uint32")
+                self.assertEqual(mask.dtypes[0], "uint64")
             self.assertEqual(set(routes["from_role"]), {"source"})
             self.assertEqual(set(routes["to_role"]), {"storage"})
             self.assertEqual(len(gpd.read_file(network_path)), 17)

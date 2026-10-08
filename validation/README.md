@@ -36,3 +36,19 @@ surface and writes:
 
 Re-run it after changing the cost weights to see whether the change moved the
 model closer to how this pipeline was actually built.
+
+## Adjustable browser model
+
+After the 250 m browser model pack exists, run:
+
+```powershell
+python -m validation.model_parity --verbose
+```
+
+This validates the model-pack hashes, writes the default and two perturbed
+250 m cost grids under `validation/model_parity/`, and records source-to-
+storage route lengths and accumulated costs in `model_parity.json`. The
+formula and the browser comparison tolerance are specified in
+[`docs/model_formula.md`](../docs/model_formula.md). Browser parity is not
+considered verified until all cells and route costs meet the documented
+0.5% tolerance with identical traversability.

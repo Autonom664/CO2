@@ -27,9 +27,14 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertIn("application/geo+json geojson;", config)
         self.assertIn(
             "include /etc/nginx/mime.types;\n    types {\n"
-            "        application/geo+json geojson;\n    }",
+            "        application/geo+json geojson;\n"
+            "        text/markdown md;\n    }",
             config,
         )
+        self.assertIn(r"location ~* \.md$", config)
+        self.assertIn("default_type text/markdown;", config)
+        self.assertIn("charset utf-8;", config)
+        self.assertIn("charset_types text/markdown;", config)
         self.assertIn("gzip on;", config)
         self.assertIn("gzip_min_length 1024;", config)
         self.assertIn(
@@ -37,6 +42,15 @@ class DeploymentConfigTests(unittest.TestCase):
             "text/css application/javascript;",
             config,
         )
+
+    def test_nginx_serves_precompressed_model_arrays_without_content_encoding(self) -> None:
+        config = (ROOT / "deploy" / "nginx-app.conf").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(r"location ~* \.bin\.gz$", config)
+        self.assertIn("default_type application/octet-stream;", config)
+        self.assertIn("gzip off;", config)
 
     def test_compose_host_binding_is_configurable_and_loopback_by_default(self) -> None:
         compose = yaml.safe_load(

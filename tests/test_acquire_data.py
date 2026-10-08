@@ -12,20 +12,24 @@ from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 import geopandas as gpd
+import shapely
 from pyproj import Transformer
 from shapely import union_all
-from shapely.geometry import Point, box
+from shapely.geometry import Point, Polygon, box
 
 from src.acquire_data import (
+    clip_vector,
     exclude_foreign_land_from_extent,
     download_wfs_source,
     extend_extent_to_offshore_storage,
     kml_polygon_geometries,
     osm_tag_value,
     prepare_coast_and_extent,
+    prepare_data,
     sanitize_wfs_page,
     voltage_in_volts,
     wind_farm_category,
+    write_gpkg_layer,
 )
 
 
@@ -102,6 +106,69 @@ class OffshoreExtentTests(unittest.TestCase):
             self.assertTrue(polygons[0].is_valid)
             self.assertAlmostEqual(polygons[0].area, 0.01)
 
+    def test_clip_vector_repairs_invalid_source_geometry_before_intersection(self) -> None:
+        invalid_polygon = Polygon(
+            [(0, 0), (2, 2), (0, 2), (2, 0), (0, 0)]
+        )
+        self.assertFalse(invalid_polygon.is_valid)
+        source = gpd.GeoDataFrame(
+            {"source_id": [1]},
+            geometry=[invalid_polygon],
+            crs="EPSG:25832",
+        )
+
+        clipped = clip_vector(source, box(-1, -1, 3, 3))
+
+        self.assertEqual(clipped["source_id"].tolist(), [1])
+        self.assertTrue(shapely.is_valid(clipped.geometry.values).all())
+        self.assertEqual(clipped.geometry.iloc[0].geom_type, "MultiPolygon")
+
+
+class PhaseBResumeTests(unittest.TestCase):
+    def test_phase_b_resume_runs_phase_b_storage_and_source_register(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            processed = Path(temporary)
+            extent_path = processed / "coast_land_water.gpkg"
+            extent_path.touch()
+            manifest = {"phase_b_sample": {"download_date": "2026-10-08"}}
+            extent = gpd.GeoDataFrame(
+                geometry=[box(0, 0, 1, 1)], crs="EPSG:25832"
+            )
+            with (
+                patch("src.acquire_data.PROCESSED", processed),
+                patch("src.acquire_data.gpd.read_file", return_value=extent),
+                patch("src.acquire_data.prepare_phase_b_layers") as phase_b,
+                patch("src.acquire_data.prepare_storage_areas") as storage,
+                patch("src.acquire_data.write_source_register") as sources,
+                patch("src.acquire_data.prepare_osm") as prepare_osm,
+            ):
+                prepare_data(manifest, resume="phase_b")
+
+            phase_b.assert_called_once()
+            self.assertTrue(phase_b.call_args.args[0].crs.equals("EPSG:25832"))
+            storage.assert_called_once_with()
+            sources.assert_called_once_with(manifest)
+            prepare_osm.assert_not_called()
+
+
+class GeoPackageWriterTests(unittest.TestCase):
+    def test_writer_preserves_case_colliding_source_fields_with_unique_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "phase_b.gpkg"
+            frame = gpd.GeoDataFrame(
+                {"id": ["feature"], "Id": ["source identifier"]},
+                geometry=[box(0, 0, 1, 1)],
+                crs="EPSG:25832",
+            )
+
+            write_gpkg_layer(path, "contaminated", frame)
+
+            fields = gpd.read_file(path, layer="contaminated").columns.tolist()
+            self.assertIn("id", fields)
+            self.assertIn("Id_2", fields)
+
+
+class OffshoreExtentRemainderTests(unittest.TestCase):
     def test_open_sea_layer_excludes_foreign_land(self) -> None:
         full_extent = box(0, 0, 4, 4)
         country_boundary = box(0, 0, 2, 4)

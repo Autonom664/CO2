@@ -8,7 +8,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,7 @@ import numpy as np
 import pyogrio
 import rasterio
 import yaml
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import binary_dilation, convolve, distance_transform_edt
 from rasterio.features import rasterize
 from rasterio.transform import from_origin
 from rasterio.warp import Resampling, reproject
@@ -31,18 +31,55 @@ LOG = logging.getLogger("cost_surface")
 BATCH_SIZE = 50_000
 
 
+def path_for_metadata(path: Path) -> str:
+    resolved_path = path.resolve()
+    try:
+        return str(resolved_path.relative_to(ROOT))
+    except ValueError:
+        return str(resolved_path)
+
+
 def load_config(path: Path = CONFIG) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as stream:
-        config = yaml.safe_load(stream)
-    if not isinstance(config, dict):
-        raise ValueError(f"Expected a YAML mapping in {path}")
-    return config
+    def load(current_path: Path, seen: set[Path]) -> dict[str, Any]:
+        resolved_path = current_path.resolve()
+        if resolved_path in seen:
+            raise ValueError(f"Configuration inheritance cycle at {current_path}")
+        with current_path.open(encoding="utf-8") as stream:
+            current = yaml.safe_load(stream)
+        if not isinstance(current, dict):
+            raise ValueError(f"Expected a YAML mapping in {current_path}")
+        base_name = current.pop("extends", None)
+        replace_sections = set(current.pop("replace_sections", []))
+        if base_name is None:
+            return current
+        base = load(
+            current_path.parent / str(base_name), seen | {resolved_path}
+        )
+
+        def merge(destination: dict[str, Any], overlay: dict[str, Any]) -> None:
+            for key, value in overlay.items():
+                if (
+                    key in replace_sections
+                    or key not in destination
+                    or not isinstance(value, dict)
+                    or not isinstance(destination[key], dict)
+                ):
+                    destination[key] = value
+                else:
+                    merge(destination[key], value)
+
+        merge(base, current)
+        return base
+
+    return load(path, set())
 
 
 def validate_cost_scores(
     costs: dict[str, Any],
     layers: dict[str, Any],
     barriers: list[str],
+    minimum_score: float = 1,
+    additional_cost_names: set[str] | None = None,
 ) -> None:
     barrier_names = set(barriers)
     score_names = {"open_land", "open_sea", "building_barrier"}
@@ -51,12 +88,19 @@ def validate_cost_scores(
         for layer in layers.values()
         if "cost" in layer and str(layer["cost"]) not in barrier_names
     )
+    score_names.update(additional_cost_names or set())
     for name in sorted(score_names):
         if name not in costs:
             raise ValueError(f"Missing configured cost score for {name!r}")
         score = float(costs[name])
-        if not math.isfinite(score) or not 1 <= score <= 10:
-            raise ValueError(f"Cost score for {name!r} must be between 1 and 10")
+        if (
+            not math.isfinite(score)
+            or not minimum_score <= score <= 10
+        ):
+            raise ValueError(
+                f"Cost score for {name!r} must be between "
+                f"{minimum_score:g} and 10"
+            )
 
     population = costs.get("population")
     if not isinstance(population, dict):
@@ -69,13 +113,26 @@ def validate_cost_scores(
     if (
         not math.isfinite(minimum)
         or not math.isfinite(maximum)
-        or minimum < 1
+        or minimum < minimum_score
         or maximum > 10
         or maximum < minimum
     ):
-        raise ValueError("Population cost scores must be between 1 and 10")
+        raise ValueError(
+            f"Population cost scores must be between {minimum_score:g} and 10"
+        )
     if "building_barrier" not in barriers:
         raise ValueError("Buildings must remain impassable barriers")
+    risk = costs.get("population_risk")
+    if isinstance(risk, dict) and risk.get("enabled", False):
+        maximum_risk = float(risk["maximum"])
+        if (
+            not math.isfinite(maximum_risk)
+            or not minimum_score <= maximum_risk <= 10
+        ):
+            raise ValueError(
+                "Population-risk score must be between "
+                f"{minimum_score:g} and 10"
+            )
 
 
 def validate_class_bits(class_bits: dict[str, Any]) -> np.dtype[Any]:
@@ -159,15 +216,107 @@ def parallel_corridor_mask(
 
 
 def max_group_contribution(
-    members: list[tuple[np.ndarray, float]],
+    members: Sequence[tuple[np.ndarray, float | np.ndarray]],
     shape: tuple[int, int],
 ) -> np.ndarray:
     contribution = np.zeros(shape, dtype=np.float32)
     for member_mask, score in members:
-        contribution[member_mask] = np.maximum(
-            contribution[member_mask], score
-        )
+        if isinstance(score, np.ndarray):
+            contribution[member_mask] = np.maximum(
+                contribution[member_mask], score[member_mask]
+            )
+        else:
+            contribution[member_mask] = np.maximum(
+                contribution[member_mask], score
+            )
     return contribution
+
+
+def landfall_cells(
+    land_mask: np.ndarray,
+    sea_mask: np.ndarray,
+    extent_mask: np.ndarray,
+    connectivity: int = 8,
+) -> np.ndarray:
+    if connectivity == 8:
+        neighbourhood = np.ones((3, 3))
+    elif connectivity == 4:
+        neighbourhood = np.array(
+            [[False, True, False], [True, True, True], [False, True, False]]
+        )
+    else:
+        raise ValueError("Landfall connectivity must be 4 or 8")
+    sea_neighbourhood = np.asarray(
+        binary_dilation(sea_mask, structure=neighbourhood), dtype=bool
+    )
+    return land_mask & extent_mask & sea_neighbourhood
+
+
+def population_risk_costs(
+    population_counts: np.ndarray,
+    extent_mask: np.ndarray,
+    land_mask: np.ndarray,
+    resolution_m: int,
+    settings: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray, dict[str, float | int]]:
+    radius_m = float(settings["radius_m"])
+    kernel_shape = str(settings.get("kernel", "circular"))
+    threshold = float(settings["threshold_people"])
+    max_score = float(settings["maximum"])
+    quantile_count = int(settings["quantiles"])
+    if (
+        not math.isfinite(radius_m)
+        or not math.isfinite(threshold)
+        or not math.isfinite(max_score)
+        or radius_m <= 0
+        or threshold < 0
+        or not 0 <= max_score <= 10
+        or resolution_m <= 0
+        or quantile_count < 2
+        or kernel_shape != "circular"
+    ):
+        raise ValueError("Invalid population-risk settings")
+
+    radius_cells = int(math.ceil(radius_m / resolution_m))
+    offsets = np.arange(-radius_cells, radius_cells + 1, dtype=np.int32)
+    rows, cols = np.meshgrid(offsets, offsets, indexing="ij")
+    kernel = (
+        (rows * resolution_m) ** 2 + (cols * resolution_m) ** 2
+        <= radius_m**2
+    ).astype(np.float32)
+    focal_population = np.asarray(
+        convolve(
+            np.where(
+                np.isfinite(population_counts), population_counts, 0
+            ).astype(np.float32),
+            kernel,
+            mode="constant",
+            cval=0,
+        ),
+        dtype=np.float32,
+    )
+    eligible = land_mask & extent_mask & (focal_population > threshold)
+    scores = np.zeros(population_counts.shape, dtype=np.float32)
+    values = focal_population[eligible]
+    if values.size:
+        thresholds = np.quantile(values, np.linspace(0, 1, quantile_count + 1))
+        score_levels = np.linspace(0, max_score, quantile_count + 1)
+        unique_thresholds, inverse = np.unique(thresholds, return_inverse=True)
+        if unique_thresholds.size == 1:
+            quantile_scores = np.array([max_score], dtype=np.float64)
+        else:
+            score_sums = np.bincount(inverse, weights=score_levels)
+            score_counts = np.bincount(inverse)
+            quantile_scores = score_sums / score_counts
+        scores[eligible] = np.interp(
+            focal_population[eligible], unique_thresholds, quantile_scores
+        )
+    return scores, eligible, {
+        "cells_above_threshold": int(values.size),
+        "maximum_focal_population": float(values.max()) if values.size else 0.0,
+        "radius_m": radius_m,
+        "threshold_people": threshold,
+    }
 
 
 def make_grid(extent_path: Path, resolution: int, target_crs: str) -> tuple[
@@ -265,6 +414,7 @@ def rasterize_extent_and_land(
     height: int,
     target_crs: str,
     all_touched: bool,
+    extent_all_touched: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     extent_path = PROCESSED / "coast_land_water.gpkg"
     extent = gpd.read_file(extent_path, layer="analysis_extent").to_crs(target_crs)
@@ -274,7 +424,7 @@ def rasterize_extent_and_land(
         out_shape=(height, width),
         transform=transform,
         fill=0,
-        all_touched=False,
+        all_touched=extent_all_touched,
         dtype="uint8",
     )
     land_mask = rasterize(
@@ -285,19 +435,20 @@ def rasterize_extent_and_land(
         all_touched=all_touched,
         dtype="uint8",
     )
-    return extent_mask.astype(bool), land_mask.astype(bool)
+    return (
+        np.asarray(extent_mask, dtype=bool),
+        np.asarray(land_mask, dtype=bool),
+    )
 
 
-def population_costs(
+def population_counts(
     extent_mask: np.ndarray,
-    land_mask: np.ndarray,
     transform: rasterio.Affine,
     width: int,
     height: int,
     target_crs: str,
     resolution_m: int,
-    settings: dict[str, Any],
-) -> tuple[np.ndarray, dict[str, float | int]]:
+) -> np.ndarray:
     path = PROCESSED / "population_2020_100m.tif"
     if not path.exists():
         raise FileNotFoundError(f"Required population raster is missing: {path}")
@@ -317,9 +468,37 @@ def population_costs(
         source_resolution_x, source_resolution_y = source.res
     if not math.isclose(source_resolution_x, source_resolution_y):
         raise ValueError("Population raster requires square source cells")
-    area_scale = (resolution_m / source_resolution_x) ** 2
-    population *= area_scale
-    threshold = float(settings.get("min_per_cell", 0)) * area_scale
+    population *= (resolution_m / source_resolution_x) ** 2
+    population[~extent_mask] = np.nan
+    return population
+
+
+def population_costs(
+    extent_mask: np.ndarray,
+    land_mask: np.ndarray,
+    transform: rasterio.Affine,
+    width: int,
+    height: int,
+    target_crs: str,
+    resolution_m: int,
+    settings: dict[str, Any],
+    counts: np.ndarray | None = None,
+) -> tuple[np.ndarray, dict[str, float | int]]:
+    population = (
+        counts
+        if counts is not None
+        else population_counts(
+            extent_mask, transform, width, height, target_crs, resolution_m
+        )
+    )
+    reference_resolution = float(
+        settings.get("reference_cell_resolution_m", 100)
+    )
+    if not math.isfinite(reference_resolution) or reference_resolution <= 0:
+        raise ValueError("Population reference-cell resolution must be positive")
+    threshold = float(settings.get("min_per_cell", 0)) * (
+        resolution_m / reference_resolution
+    ) ** 2
     eligible = (
         land_mask
         & extent_mask
@@ -404,13 +583,22 @@ def build_cost_surface(
     output_path: Path | None = None,
     exclude_osm_ids: list[str] | None = None,
 ) -> Path:
+    config_path = config_path.resolve()
     config = load_config(config_path)
     grid_config = config["grid"]
     costs = config["costs"]
+    minimum_score = float(config.get("score_minimum", 1))
+    landfall_config = config.get("landfall", {})
+    population_risk_config = costs.get("population_risk", {})
+    derived_cost_names: set[str] = set()
+    if landfall_config.get("enabled", False):
+        derived_cost_names.add(str(landfall_config["cost"]))
     validate_cost_scores(
         costs,
         config["layers"],
         [str(name) for name in config.get("barriers", [])],
+        minimum_score,
+        derived_cost_names,
     )
     discount_classes = {
         str(name) for name in config.get("discount_classes", [])
@@ -445,6 +633,7 @@ def build_cost_surface(
         height,
         target_crs,
         bool(config["rasterization"]["polygon_all_touched"]),
+        bool(config["rasterization"].get("extent_all_touched", False)),
     )
     land_mask &= extent_mask
     sea_mask = extent_mask & ~land_mask
@@ -597,12 +786,34 @@ def build_cost_surface(
             parallel_asset_mask |= mask
         del mask
 
+    if landfall_config.get("enabled", False):
+        landfall_name = str(landfall_config["cost"])
+        landfall_mask = landfall_cells(
+            traversable_land,
+            sea_mask,
+            extent_mask,
+            int(landfall_config.get("connectivity", 8)),
+        )
+        landfall_bit = str(landfall_config.get("class_bit", landfall_name))
+        if landfall_bit not in class_bits:
+            raise ValueError(
+                f"No class bit configured for derived class {landfall_name!r}"
+            )
+        class_mask[landfall_mask] |= int(class_bits[landfall_bit])
+        class_masks[landfall_name] = landfall_mask
+
     for barrier_name, mask in barrier_class_masks.items():
         cost_surface[mask] = nodata
         record_class(barrier_name, mask, "barrier", impassable=True)
 
     combine_groups = config.get("combine_groups", {})
     grouped_classes: set[str] = set()
+    deferred_groups: dict[str, list[str]] = {}
+    dynamic_classes = {
+        "dwelling_proximity",
+        "population",
+        "population_risk",
+    }
     for group_name, group in combine_groups.items():
         members = [str(member) for member in group["members"]]
         if group.get("rule") != "max" or len(members) < 2:
@@ -612,17 +823,22 @@ def build_cost_surface(
             )
         if grouped_classes.intersection(members):
             raise ValueError("A cost class may belong to only one combine group")
-        missing_members = set(members) - class_masks.keys()
+        missing_members = set(members) - class_masks.keys() - dynamic_classes
         if missing_members:
             raise ValueError(
                 f"Combine group {group_name!r} has missing cost classes: "
                 f"{sorted(missing_members)}"
             )
         grouped_classes.update(members)
+        if dynamic_classes.intersection(members):
+            deferred_groups[str(group_name)] = members
+            continue
         combined_mask = np.zeros((height, width), dtype=bool)
-        group_members: list[tuple[np.ndarray, float]] = []
+        group_members: list[tuple[np.ndarray, float | np.ndarray]] = []
         for member in members:
-            member_mask = class_masks[member]
+            member_mask = class_masks.get(
+                member, np.zeros((height, width), dtype=bool)
+            )
             combined_mask |= member_mask
             member_score = float(costs[member]) * cost_scale
             group_members.append((member_mask, member_score))
@@ -667,8 +883,13 @@ def build_cost_surface(
             total_contribution=total_contribution,
         )
 
+    dynamic_group_values: dict[
+        str, tuple[np.ndarray, np.ndarray]
+    ] = {}
     proximity_config = costs.get("dwelling_proximity", {})
     if proximity_config.get("enabled", True):
+        if str(proximity_config.get("distance_metric", "euclidean")) != "euclidean":
+            raise ValueError("Dwelling proximity supports Euclidean distance only")
         proximity_scores, proximity_mask = dwelling_proximity_costs(
             building_mask,
             traversable_land,
@@ -677,17 +898,26 @@ def build_cost_surface(
             float(proximity_config["max_score"]),
         )
         proximity_scores *= cost_scale
-        cost_surface[proximity_mask] += proximity_scores[proximity_mask]
+        proximity_mask &= np.isfinite(cost_surface) & (cost_surface != nodata)
         class_mask[proximity_mask] |= int(class_bits["dwelling_proximity"])
-        record_class(
-            "dwelling_proximity",
-            proximity_mask,
-            "distance-scaled",
-            total_contribution=float(proximity_scores[proximity_mask].sum()),
-        )
+        if "dwelling_proximity" in grouped_classes:
+            dynamic_group_values["dwelling_proximity"] = (
+                proximity_mask,
+                proximity_scores,
+            )
+        else:
+            cost_surface[proximity_mask] += proximity_scores[proximity_mask]
+            record_class(
+                "dwelling_proximity",
+                proximity_mask,
+                "distance-scaled",
+                total_contribution=float(proximity_scores[proximity_mask].sum()),
+            )
 
     parallel_config = config.get("parallel_corridor", {})
     if parallel_config.get("enabled", False):
+        if str(parallel_config.get("distance_metric", "euclidean")) != "euclidean":
+            raise ValueError("Parallel corridor supports Euclidean distance only")
         excluded_ids = sorted(
             {
                 str(identifier)
@@ -743,7 +973,21 @@ def build_cost_surface(
         )
 
     population_config = costs["population"]
-    if population_config.get("enabled", True):
+    population_enabled = population_config.get("enabled", True)
+    risk_enabled = population_risk_config.get("enabled", False)
+    population_values: np.ndarray | None = None
+    population_summary: dict[str, Any] = {"enabled": False}
+    population_risk_summary: dict[str, Any] = {"enabled": False}
+    if population_enabled or risk_enabled:
+        population_values = population_counts(
+            extent_mask,
+            transform,
+            width,
+            height,
+            target_crs,
+            resolution,
+        )
+    if population_enabled:
         population, population_summary = population_costs(
             extent_mask,
             traversable_land,
@@ -753,6 +997,7 @@ def build_cost_surface(
             target_crs,
             resolution,
             population_config,
+            population_values,
         )
         population *= cost_scale
         population_mask = (
@@ -761,16 +1006,92 @@ def build_cost_surface(
             & np.isfinite(cost_surface)
             & (cost_surface != nodata)
         )
-        cost_surface[population_mask] += population[population_mask]
         class_mask[population_mask] |= int(class_bits["population"])
-        record_class(
-            "population",
-            population_mask,
-            "quantile-scaled",
-            total_contribution=float(population[population_mask].sum()),
+        if "population" in grouped_classes:
+            dynamic_group_values["population"] = (
+                population_mask,
+                population,
+            )
+        else:
+            cost_surface[population_mask] += population[population_mask]
+            record_class(
+                "population",
+                population_mask,
+                "quantile-scaled",
+                total_contribution=float(population[population_mask].sum()),
+            )
+
+    if risk_enabled:
+        if population_values is None:
+            raise RuntimeError("Population-risk calculation has no population grid")
+        risk_scores, risk_mask, population_risk_summary = (
+            population_risk_costs(
+                population_values,
+                extent_mask,
+                traversable_land,
+                resolution,
+                population_risk_config,
+            )
         )
-    else:
-        population_summary = {"enabled": False}
+        risk_scores *= cost_scale
+        risk_mask &= (
+            np.isfinite(cost_surface) & (cost_surface != nodata)
+        )
+        risk_bit = str(
+            population_risk_config.get("class_bit", "population_risk")
+        )
+        if risk_bit not in class_bits:
+            raise ValueError("No class bit configured for population_risk")
+        class_mask[risk_mask] |= int(class_bits[risk_bit])
+        if "population_risk" in grouped_classes:
+            dynamic_group_values["population_risk"] = (
+                risk_mask,
+                risk_scores,
+            )
+        else:
+            cost_surface[risk_mask] += risk_scores[risk_mask]
+            record_class(
+                "population_risk",
+                risk_mask,
+                "quantile-scaled",
+                total_contribution=float(risk_scores[risk_mask].sum()),
+            )
+
+    for group_name, members in deferred_groups.items():
+        combined_mask = np.zeros((height, width), dtype=bool)
+        deferred_group_members: list[
+            tuple[np.ndarray, np.ndarray | float]
+        ] = []
+        for member in members:
+            if member in dynamic_group_values:
+                member_mask, member_scores = dynamic_group_values[member]
+            elif member in class_masks:
+                member_mask = class_masks[member]
+                member_scores = np.full(
+                    (height, width),
+                    float(costs[member]) * cost_scale,
+                    dtype=np.float32,
+                )
+            else:
+                member_mask = np.zeros((height, width), dtype=bool)
+                member_scores = np.zeros((height, width), dtype=np.float32)
+            combined_mask |= member_mask
+            deferred_group_members.append((member_mask, member_scores))
+        group_contribution = max_group_contribution(
+            deferred_group_members, (height, width)
+        )
+        applicable = (
+            combined_mask
+            & np.isfinite(cost_surface)
+            & (cost_surface != nodata)
+        )
+        cost_surface[applicable] += group_contribution[applicable]
+        record_class(
+            group_name,
+            combined_mask,
+            "max(" + ", ".join(members) + ")",
+            total_contribution=float(group_contribution[applicable].sum()),
+        )
 
     record_class("building_barrier", building_mask, "barrier", impassable=True)
     class_mask[~extent_mask] = 0
@@ -783,7 +1104,9 @@ def build_cost_surface(
     ):
         raise ValueError("Traversable cell costs must all be positive")
 
-    output_path = output_path or PROCESSED / f"cost_surface_{resolution}m.tif"
+    output_path = (
+        output_path or PROCESSED / f"cost_surface_{resolution}m.tif"
+    ).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     profile = {
         "driver": "GTiff",
@@ -812,8 +1135,14 @@ def build_cost_surface(
                 "Population averaged to grid and scaled to analysis-cell area; "
                 "cells below the configured per-100-m-cell threshold are uncosted"
             ),
+            population_risk_method=(
+                "Population summed within the configured circular land-cell "
+                "neighbourhood, then quantile scored"
+                if risk_enabled
+                else "disabled"
+            ),
             extent_bounds_m=",".join(f"{value:.2f}" for value in bounds),
-            source_config=str(config_path.relative_to(ROOT)),
+            source_config=path_for_metadata(config_path),
         )
 
     class_output_path = output_path.with_name(
@@ -853,8 +1182,9 @@ def build_cost_surface(
         "cost_min": float(np.min(cost_surface[cost_surface != nodata])),
         "cost_max": float(np.max(cost_surface[cost_surface != nodata])),
         "population_summary": population_summary,
-        "statistics_csv": str(stats_path.relative_to(ROOT)),
-        "class_mask_raster": str(class_output_path.relative_to(ROOT)),
+        "population_risk_summary": population_risk_summary,
+        "statistics_csv": path_for_metadata(stats_path),
+        "class_mask_raster": path_for_metadata(class_output_path),
     }
     if exclude_osm_ids:
         metadata["excluded_parallel_asset_osm_ids"] = sorted(

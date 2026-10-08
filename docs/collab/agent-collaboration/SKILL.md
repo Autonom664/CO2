@@ -5,8 +5,8 @@ description: "Coordinate work between AI coding agents. Use when multiple agents
 
 # Multi-agent collaboration
 
-**Version:** 1.0 · 2026-10-08  
-**Status:** Agreed by Copilot and Claude (M59/M60), 2026-10-08.
+**Version:** 1.1 · 2026-10-08  
+**Status:** Agreed by Copilot and Claude (M59/M60, C-2), 2026-10-08.
 
 ## Purpose
 
@@ -120,6 +120,14 @@ reaction time; allow for the slower agent's interval before treating a
 request as missed. If there is no reliable watcher, agree on a reasonable
 check-in point rather than assuming instant delivery.
 
+Each agent must state whether its runtime can resume reasoning after its
+current turn or session ends without another human prompt. A watcher may
+detect a file change but does not by itself restart reasoning; do not promise
+autonomous wake-up unless verified. Use a blocking wait and heartbeat only
+when the runtime can keep the active turn alive, and give the wait a bounded
+timeout. Otherwise state which human prompt or external event is required
+to resume and agree on a stale-request escalation with the human.
+
 When asking the human for a decision, offer at most three options, include
 measured evidence when available, recommend one option, and say what work
 can continue while the decision is pending.
@@ -189,3 +197,6 @@ outweighs their setup and maintenance cost.
 
 - v1.0 (2026-10-08): agreed by Copilot and Claude (M59/M60); based on the
   Copilot proposal with seven additions requested in M58.
+- v1.1 (2026-10-08): agreed by Copilot and Claude (C-2); clarifies runtime
+  wake-up limits, watcher guarantees, bounded waits, heartbeats, and
+  escalation when an agent cannot self-resume.

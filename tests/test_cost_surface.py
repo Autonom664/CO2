@@ -1,6 +1,7 @@
 import unittest
 import json
 import tempfile
+from contextlib import chdir
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,9 +16,12 @@ from src.cost_surface import (
     build_cost_surface,
     dwelling_proximity_costs,
     load_excluded_osm_ids,
+    landfall_cells,
+    load_config,
     max_group_contribution,
     parallel_corridor_mask,
     population_costs,
+    population_risk_costs,
     rasterize_layer,
     validate_class_bits,
     validate_cost_scores,
@@ -54,6 +58,85 @@ class CostScoreTests(unittest.TestCase):
         self.barriers = []
         with self.assertRaisesRegex(ValueError, "impassable barriers"):
             validate_cost_scores(self.costs, self.layers, self.barriers)
+
+    def test_p12_accepts_half_and_zero_scores(self) -> None:
+        self.costs["road_major"] = 0.5
+        self.costs["population"] = {"minimum": 0, "maximum": 1}
+        validate_cost_scores(
+            self.costs, self.layers, self.barriers, minimum_score=0
+        )
+
+
+class P12CostModelTests(unittest.TestCase):
+    def test_overlay_keeps_baseline_and_overrides_p12_sections(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        baseline = load_config(root / "config" / "costs_baseline.yaml")
+        p12 = load_config(root / "config" / "costs_p12.yaml")
+
+        self.assertEqual(baseline["costs"]["road_major"], 4)
+        self.assertEqual(p12["costs"]["road_major"], 5)
+        self.assertEqual(p12["costs"]["road_minor"], 0.5)
+        self.assertEqual(p12["parallel_corridor"]["factor"], 0.9)
+        self.assertEqual(
+            set(p12["combine_groups"]),
+            {"wet_nature", "forest_group", "people"},
+        )
+        self.assertEqual(p12["layers"]["fredskov"]["class_bit"], "fredskov")
+        validate_cost_scores(
+            p12["costs"],
+            p12["layers"],
+            p12["barriers"],
+            float(p12["score_minimum"]),
+            {"landfall"},
+        )
+
+    def test_landfall_marks_only_land_adjacent_to_sea(self) -> None:
+        land = np.array([[True, True, True, False]])
+        sea = np.array([[False, False, False, True]])
+        extent = np.ones_like(land)
+
+        np.testing.assert_array_equal(
+            landfall_cells(land, sea, extent),
+            [[False, False, True, False]],
+        )
+
+    def test_population_risk_uses_population_within_radius(self) -> None:
+        counts = np.zeros((5, 5), dtype=np.float32)
+        counts[2, 2] = 60
+        extent = np.ones_like(counts, dtype=bool)
+        land = extent.copy()
+
+        scores, mask, summary = population_risk_costs(
+            counts,
+            extent,
+            land,
+            100,
+            {
+                "radius_m": 1000,
+                "threshold_people": 50,
+                "maximum": 5,
+                "quantiles": 5,
+            },
+        )
+
+        self.assertTrue(np.all(mask))
+        np.testing.assert_array_equal(scores, np.full((5, 5), 5))
+        self.assertEqual(summary["cells_above_threshold"], 25)
+
+    def test_people_group_uses_highest_dynamic_score_without_stacking(self) -> None:
+        urban_mask = np.array([[True, False, False]])
+        population_mask = np.array([[True, True, False]])
+        risk_mask = np.array([[False, True, True]])
+        contribution = max_group_contribution(
+            [
+                (urban_mask, 1.0),
+                (population_mask, np.array([[0.5, 0.75, 0.0]])),
+                (risk_mask, np.array([[0.0, 5.0, 2.0]])),
+            ],
+            (1, 3),
+        )
+
+        np.testing.assert_array_equal(contribution, [[1.0, 5.0, 2.0]])
 
 
 class PhaseACostModelTests(unittest.TestCase):
@@ -192,7 +275,8 @@ class PhaseACostModelTests(unittest.TestCase):
                 {
                     "bnbo": gpd.GeoDataFrame(
                         geometry=[
-                            box(500_600, 6_200_600, 500_700, 6_200_700)
+                                box(500_600, 6_200_600, 500_700, 6_200_700),
+                                box(500_500, 6_200_200, 500_600, 6_200_300),
                         ],
                         crs="EPSG:25832",
                     ),
@@ -380,10 +464,31 @@ class PhaseACostModelTests(unittest.TestCase):
                 (processed / filename).write_bytes(content)
             cost_path = validation_dir / "cost_surface_100m.tif"
             with (
+                chdir(root),
                 patch("src.cost_surface.PROCESSED", processed),
                 patch("src.cost_surface.ROOT", root),
             ):
-                build_cost_surface(config_path, cost_path, ["123"])
+                build_cost_surface(
+                    Path("costs.yaml"),
+                    Path(
+                        "processed/validation/cost_surface_100m.tif"
+                    ),
+                    ["123"],
+                )
+
+            metadata = json.loads(
+                (validation_dir / "cost_surface_metadata.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                Path(metadata["statistics_csv"]).as_posix(),
+                "processed/validation/cost_surface_class_statistics.csv",
+            )
+            self.assertEqual(
+                Path(metadata["class_mask_raster"]).as_posix(),
+                "processed/validation/cost_class_mask_100m.tif",
+            )
 
             with rasterio.open(cost_path) as cost_raster:
                 costs = cost_raster.read(1)
@@ -399,6 +504,13 @@ class PhaseACostModelTests(unittest.TestCase):
                     cost_raster.transform, 500_650, 6_200_650
                 )
                 self.assertEqual(float(costs[protected_row, protected_col]), -9999)
+                nearby_barrier_row, nearby_barrier_col = rowcol(
+                    cost_raster.transform, 500_550, 6_200_250
+                )
+                self.assertEqual(
+                    float(costs[nearby_barrier_row, nearby_barrier_col]),
+                    -9999,
+                )
                 sea_row, sea_col = rowcol(
                     cost_raster.transform, 500_750, 6_200_750
                 )
@@ -413,6 +525,15 @@ class PhaseACostModelTests(unittest.TestCase):
                 self.assertTrue(np.any(class_mask & bits["parallel_corridor"]))
                 self.assertTrue(
                     np.any(class_mask & np.uint32(524_288))
+                )
+                self.assertEqual(
+                    int(
+                        class_mask[
+                            nearby_barrier_row, nearby_barrier_col
+                        ]
+                        & bits["dwelling_proximity"]
+                    ),
+                    0,
                 )
                 self.assertTrue(
                     np.any(class_mask & bits["marine_cable_corridor"])
