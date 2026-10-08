@@ -1,0 +1,62 @@
+# P12 recalibration overlay. The original costs.yaml stays as the C14 baseline.
+extends: costs.yaml
+score_minimum: 0
+replace_sections:
+  - combine_groups
+
+costs:
+  road_major: 5
+  road_minor: 0.5
+  watercourse_crossing: 1
+  forest: 0.5
+  urban_area: 1
+  wetland: 1
+  landfall: 10
+  drinking_water_od: 0
+  drinking_water_osd: 0.5
+  groundwater_catchment: 0.5
+  population:
+    minimum: 0
+    maximum: 1
+  population_risk:
+    enabled: true
+    radius_m: 1000
+    threshold_people: 50
+    maximum: 5
+    quantiles: 5
+    class_bit: population_risk
+
+landfall:
+  enabled: true
+  cost: landfall
+  class_bit: landfall
+
+parallel_corridor:
+  factor: 0.9
+
+combine_groups:
+  wet_nature:
+    members: [wetland, protected_nature, natura2000]
+    rule: max
+  forest_group:
+    members: [forest, fredskov]
+    rule: max
+  people:
+    members: [urban_area, population, dwelling_proximity, population_risk]
+    rule: max
+
+class_bits:
+  fredskov: 4294967296
+  population_risk: 8589934592
+  landfall: 17179869184
+
+route_classes:
+  urban_area: [urban_area]
+  wetland: [wetland]
+  fredskov: [fredskov]
+  landfall: [landfall]
+  population_risk: [population_risk]
+
+layers:
+  fredskov:
+    class_bit: fredskov
