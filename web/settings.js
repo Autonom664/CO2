@@ -7,6 +7,7 @@ import {
 } from "./engine/labels.js";
 import { EXPERIMENTS } from "./engine/experiments.js";
 import { initModelUi } from "./model_ui.js";
+import { showWelcome, showWelcomeOnFirstVisit } from "./welcome.js";
 import {
   defaultScenario, describeChanges, loadLocal, reconcile, saveLocal, sitesFromCsv, sitesToCsv,
 } from "./engine/scenario.js";
@@ -346,9 +347,16 @@ function scenariosTab() {
   ];
 }
 
+function openLearn() {
+  togglePanel(true);
+  activeTab = "learn";
+  renderActiveTab();
+}
+
 function helpTab() {
   return [
     element("p", {}, ABOUT_TEXT),
+    element("button", { type: "button", onclick: () => showWelcome({ openLearn }) }, "Show the welcome guide again"),
     element("h3", {}, "How the model works"),
     element("p", {}, WEIGHT_SCALE_HELP),
     element("p", {}, "The route between two sites is the path with the lowest total cost, like ArcGIS Cost Path. " +
@@ -657,6 +665,7 @@ async function init() {
   const attach = () => {
     window.co2Map.on("click", handleMapClick);
     initModelUi(window.co2Settings);
+    showWelcomeOnFirstVisit({ openLearn });
   };
   if (window.co2Map) attach();
   else window.addEventListener("co2map-ready", attach, { once: true });

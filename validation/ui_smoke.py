@@ -77,6 +77,14 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
         )
         check(0 < sizes["largest"] <= sizes["limit"], "cost tiles fit the GPU texture limit",
               f"{sizes['tiles']} tiles, largest {sizes['largest']} px, limit {sizes['limit']}")
+        # First visit: the welcome guide opens; closing it must free the page.
+        welcome = page.locator("#welcome-dialog")
+        page.wait_for_timeout(500)
+        shown = welcome.count() > 0 and welcome.is_visible()
+        if shown:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+        check(shown and not welcome.is_visible(), "welcome guide on first visit, closable")
         badges = page.locator(".score-badge").count()
         check(badges >= 10, "score badges on layer toggles", f"{badges}")
         # Classes added by the recalibration (D12/D14).
