@@ -21,6 +21,8 @@ class BuildWebTests(unittest.TestCase):
             name: 1 << index
             for index, name in enumerate(build_web.LAYER_PRESENTATION)
         }
+        # P12 adds classes above bit 31, so the mask is uint64.
+        class_bits["road_major"] = 1 << 34
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             processed = root / "processed"
@@ -44,12 +46,12 @@ class BuildWebTests(unittest.TestCase):
                 **(profile | {"dtype": "float32", "nodata": -9999}),
             ) as dataset:
                 dataset.write(cost, 1)
-            classes = np.full((10, 10), class_bits["open_land"], dtype=np.uint32)
+            classes = np.full((10, 10), class_bits["open_land"], dtype=np.uint64)
             classes[4:6, 4:6] |= class_bits["road_major"]
             with rasterio.open(
                 processed / "cost_class_mask_100m.tif",
                 "w",
-                **(profile | {"dtype": "uint32", "nodata": 0}),
+                **(profile | {"dtype": "uint64", "nodata": 0}),
             ) as dataset:
                 dataset.write(classes, 1)
                 dataset.update_tags(class_bits=json.dumps(class_bits))

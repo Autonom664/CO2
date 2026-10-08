@@ -347,7 +347,9 @@ def build_web(
                     "Cost-class bit assignments differ from config; "
                     "rebuild the cost surface before building the web map."
                 )
-            class_mask = mask_source.read(1).astype(np.uint32)
+            class_mask = mask_source.read(1)
+            if not np.issubdtype(class_mask.dtype, np.unsignedinteger):
+                raise ValueError(f"Class mask must be unsigned integers, got {class_mask.dtype}")
 
         display_crs = "EPSG:3857"
         display_resolution = int(config.get("web", {}).get("display_resolution_m", 250))
