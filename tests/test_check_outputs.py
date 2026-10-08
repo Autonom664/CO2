@@ -63,5 +63,12 @@ class LengthTests(unittest.TestCase):
         )
 
 
+class DetourTests(unittest.TestCase):
+    def test_detour_factor_is_length_over_straight_line(self) -> None:
+        points = {"a": Point(0, 0), "x": Point(10_000, 0)}
+        factors = check_outputs.detour_factors(points, [route("a", "x", length_km=12)])
+        self.assertAlmostEqual(factors["a→x"], 1.2)
+
+
 if __name__ == "__main__":
     unittest.main()

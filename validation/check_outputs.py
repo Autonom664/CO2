@@ -99,6 +99,22 @@ def check_lengths(
     return problems
 
 
+def detour_factors(
+    hotspots: dict[str, Point], routes: list[dict[str, Any]]
+) -> dict[str, float]:
+    """Route length ÷ straight-line distance, per route.
+
+    Built oil and gas lines typically fall between 1.05 and 1.35
+    (docs/routing_practice.md).
+    """
+    factors = {}
+    for route in routes:
+        straight = hotspots[route["from_id"]].distance(hotspots[route["to_id"]]) / 1000
+        if straight > 0:
+            factors[f"{route['from_id']}→{route['to_id']}"] = float(route["length_km"]) / straight
+    return factors
+
+
 def report(name: str, problems: list[str]) -> bool:
     print(f"{'PASS' if not problems else 'FAIL'}  {name}")
     for problem in problems[:10]:
@@ -142,6 +158,17 @@ def main() -> int:
         "route lengths ≥ straight-line distance",
         check_lengths(points, route_props, tolerance_km=2 * snap_km),
     )
+
+    factors = detour_factors(points, route_props)
+    values = np.array(list(factors.values()))
+    high = sorted((f for f in factors.items() if f[1] > 1.6), key=lambda f: -f[1])
+    print(
+        f"INFO  detour factor (route ÷ straight line): min {values.min():.2f}, "
+        f"median {np.median(values):.2f}, max {values.max():.2f}; built pipelines "
+        f"typically 1.05–1.35"
+    )
+    for name, value in high[:5]:
+        print(f"      - {name}: {value:.2f} (above 1.6, check)")
 
     valid = np.isfinite(cost) & (cost != nodata) & (cost > 0)
     blocked = []
