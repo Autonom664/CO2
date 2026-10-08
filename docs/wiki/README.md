@@ -17,6 +17,7 @@ drives a route.
 | [weights.md](weights.md) | Every layer and weight: what it means, why this value, what practice says |
 | [sources.md](sources.md) | Every dataset: publisher, licence, link, and known quirks |
 | [data_preparation.md](data_preparation.md) | How the raw data was turned into the cost surface |
+| [modelbuilder.md](modelbuilder.md) | Build the model in ArcGIS Pro ModelBuilder, step by step, with the starter kit |
 | [arcgis_recipe.md](arcgis_recipe.md) | Rebuild this in ArcGIS Pro, tool by tool |
 | [experiments.md](experiments.md) | Things to try in the app, and what to look for |
 | [decisions.md](decisions.md) | Every design decision (D1–D25) with its reason |

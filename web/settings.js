@@ -375,7 +375,8 @@ const WIKI_PAGES = [
   ["weights.md", "Every weight, and why"],
   ["sources.md", "Data sources"],
   ["data_preparation.md", "Data preparation"],
-  ["arcgis_recipe.md", "Rebuild it in ArcGIS Pro"],
+  ["modelbuilder.md", "Build it in ArcGIS Pro ModelBuilder (step by step)"],
+  ["arcgis_recipe.md", "ArcGIS Pro recipe (overview)"],
   ["experiments.md", "Experiments"],
   ["decisions.md", "Design decisions"],
   ["validation.md", "Validation and sensitivity"],
@@ -436,6 +437,11 @@ function learnTab() {
     element("h3", {}, "Wiki"),
     element("ul", { class: "wiki-links" }, ...WIKI_PAGES.map(([file, title]) => element("li", {},
       element("a", { href: `wiki/${file}`, onclick: (event) => { event.preventDefault(); openWikiPage(file, title); } }, title)))),
+    element("h3", {}, "ArcGIS Pro"),
+    element("p", {}, "Rebuild the model in ModelBuilder with the starter kit: every layer as an aligned 100 m raster, " +
+      "the sites and published results in a File Geodatabase, and the weights table. ",
+      element("a", { href: "downloads/co2_arcgis_starter_kit.zip", download: "" }, "Download the ArcGIS starter kit (zip)"),
+      ". Then follow the ModelBuilder guide above."),
     element("h3", {}, "Try this"),
     ...experiments,
   ];
