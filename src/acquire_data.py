@@ -6,13 +6,18 @@ import argparse
 import csv
 import gc
 import hashlib
+import io
 import json
 import logging
 import math
+import os
 import re
 import shutil
+import time
 import urllib.parse
+import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -33,6 +38,7 @@ from shapely.geometry import (
     GeometryCollection,
     LineString,
     MultiLineString,
+    MultiPoint,
     MultiPolygon,
     Point,
     Polygon,
@@ -80,6 +86,164 @@ EEA_LAYER_URL = (
 EEA_LAYER_NAMES = {
     0: "natura2000_habitats_dk.geojson",
     1: "natura2000_birds_dk.geojson",
+}
+DATAFORDELER_WFS_KEY = "DATAFORDELER_API_KEY"
+WFS_PAGE_SIZE = 2_000
+WFS_SOURCES: dict[str, dict[str, Any]] = {
+    "drinking_water": {
+        "endpoint": "https://wfs2-miljoegis.mim.dk/grukos/ows",
+        "typename": "grukos:drikkevandsinteresser",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Environmental Protection Agency",
+        "license": "CC0 1.0",
+        "title": "Drinking-water areas (OSD and OD)",
+    },
+    "bnbo": {
+        "endpoint": "https://wfs2-miljoegis.mim.dk/grukos/ows",
+        "typename": "grukos:bnbo",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Environmental Protection Agency",
+        "license": "CC0 1.0",
+        "title": "BNBO groundwater protection areas",
+    },
+    "groundwater_catchments": {
+        "endpoint": "https://wfs2-miljoegis.mim.dk/grukos/ows",
+        "typename": "grukos:indvindingsoplande_alle",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Environmental Protection Agency",
+        "license": "CC0 1.0",
+        "title": "Groundwater abstraction catchments",
+    },
+    "ancient_monuments_area": {
+        "endpoint": "https://www.kulturarv.dk/ffgeoserver/public/wfs",
+        "typename": "public:fundogfortidsminder_areal_fredet",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Agency for Culture and Palaces",
+        "license": "CC0 1.0",
+        "title": "Protected ancient monuments (areas)",
+    },
+    "ancient_monuments_line": {
+        "endpoint": "https://www.kulturarv.dk/ffgeoserver/public/wfs",
+        "typename": "public:fundogfortidsminder_linje_fredet",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Agency for Culture and Palaces",
+        "license": "CC0 1.0",
+        "title": "Protected ancient monuments (lines)",
+    },
+    "ancient_monuments_point": {
+        "endpoint": "https://www.kulturarv.dk/ffgeoserver/public/wfs",
+        "typename": "public:fundogfortidsminder_punkt_fredet",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Agency for Culture and Palaces",
+        "license": "CC0 1.0",
+        "title": "Protected ancient monuments (points)",
+    },
+    "ancient_monument_protection": {
+        "endpoint": "https://www.kulturarv.dk/ffgeoserver/public/wfs",
+        "typename": "public:fundogfortidsminder_areal_beskyttelse",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Agency for Culture and Palaces",
+        "license": "CC0 1.0",
+        "title": "Ancient-monument protection zones",
+    },
+    "lake_protection_lines": {
+        "endpoint": "https://arealeditering-dist-geo.miljoeportal.dk/geoserver/wfs",
+        "typename": "dai:soe_bes_linjer",
+        "crs": "EPSG:25832",
+        "publisher": "Danmarks Miljøportal",
+        "license": "CC0 1.0",
+        "title": "Lake protection lines",
+    },
+    "stream_protection_lines": {
+        "endpoint": "https://arealeditering-dist-geo.miljoeportal.dk/geoserver/wfs",
+        "typename": "dai:aa_bes_linjer",
+        "crs": "EPSG:25832",
+        "publisher": "Danmarks Miljøportal",
+        "license": "CC0 1.0",
+        "title": "Stream protection lines",
+    },
+    "contaminated_v2": {
+        "endpoint": "https://jord.miljoeportal.dk/geo/wfs",
+        "typename": "DKJord:View_V2Flader",
+        "crs": "EPSG:25832",
+        "publisher": "Danmarks Miljøportal (DKJord)",
+        "license": "CC0 1.0",
+        "title": "Contaminated land (V2)",
+    },
+    "contaminated_v1": {
+        "endpoint": "https://jord.miljoeportal.dk/geo/wfs",
+        "typename": "DKJord:View_V1Flader",
+        "crs": "EPSG:25832",
+        "publisher": "Danmarks Miljøportal (DKJord)",
+        "license": "CC0 1.0",
+        "title": "Contaminated land (V1)",
+    },
+    "marine_plan": {
+        "endpoint": "https://havplan.dk/geoserver/havplan/wfs",
+        "typename": "havplan:Danmarks_havplan_af_28_juni_2024",
+        "crs": "EPSG:25832",
+        "publisher": "Danish Maritime Authority",
+        "license": "CC BY 4.0",
+        "title": "Denmark's maritime spatial plan zones",
+    },
+    "offshore_wind": {
+        "endpoint": "https://ows.emodnet-humanactivities.eu/wfs",
+        "typename": "emodnet:windfarmspoly",
+        "crs": "EPSG:4326",
+        "publisher": "EMODnet Human Activities",
+        "license": "CC BY 4.0",
+        "title": "Offshore wind farms",
+    },
+    "munitions_polygons": {
+        "endpoint": "https://ows.emodnet-humanactivities.eu/wfs",
+        "typename": "emodnet:munitionspoly",
+        "crs": "EPSG:4326",
+        "publisher": "EMODnet Human Activities",
+        "license": "CC BY 4.0",
+        "title": "Dumped munitions areas",
+    },
+    "munitions_points": {
+        "endpoint": "https://ows.emodnet-humanactivities.eu/wfs",
+        "typename": "emodnet:munitions",
+        "crs": "EPSG:4326",
+        "publisher": "EMODnet Human Activities",
+        "license": "CC BY 4.0",
+        "title": "Dumped munitions points",
+    },
+    "subsea_pipelines": {
+        "endpoint": "https://ows.emodnet-humanactivities.eu/wfs",
+        "typename": "emodnet:pipelines",
+        "crs": "EPSG:4326",
+        "publisher": "EMODnet Human Activities",
+        "license": "CC BY 4.0",
+        "title": "Subsea pipelines",
+    },
+    "subsea_cables": {
+        "endpoint": "https://ows.emodnet-humanactivities.eu/wfs",
+        "typename": "emodnet:pcablesbshcontis",
+        "crs": "EPSG:4326",
+        "publisher": "EMODnet Human Activities",
+        "license": "CC BY 4.0",
+        "title": "Subsea cables",
+    },
+    "beach_protection": {
+        "endpoint": "https://wfs.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWFS/1.0.0/WFS",
+        "typename": "mat:StrandbeskyttelseFlade_Gaeldende",
+        "crs": "EPSG:25832",
+        "publisher": "Klimadatastyrelsen (Datafordeler)",
+        "license": "CC BY 4.0",
+        "title": "Beach protection areas",
+        "authenticated": True,
+    },
+    "fredskov": {
+        "endpoint": "https://wfs.datafordeler.dk/MATRIKLEN2/MatGaeldendeOgForeloebigWFS/1.0.0/WFS",
+        "typename": "mat:FredskovFlade_Gaeldende",
+        "crs": "EPSG:25832",
+        "publisher": "Klimadatastyrelsen (Datafordeler)",
+        "license": "CC BY 4.0",
+        "title": "Protected forest (fredskov)",
+        "authenticated": True,
+    },
 }
 
 LOG = logging.getLogger("acquire_data")
@@ -217,6 +381,201 @@ def download_eea_layer(
     }
 
 
+def sanitize_wfs_page(
+    content: bytes, api_key: str | None = None
+) -> tuple[bytes, int]:
+    secret_representations = (
+        {
+            api_key,
+            urllib.parse.quote(api_key, safe=""),
+            urllib.parse.quote_plus(api_key),
+        }
+        if api_key
+        else set()
+    )
+
+    def redact(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        if isinstance(value, str):
+            for representation in secret_representations:
+                value = value.replace(representation, "[REDACTED]")
+        return value
+
+    trimmed = content.lstrip(b"\xef\xbb\xbf \t\r\n")
+    if trimmed.startswith(b"{"):
+        payload = json.loads(trimmed)
+        features = payload.get("features")
+        if not isinstance(features, list):
+            raise ValueError("WFS GeoJSON response has no features array")
+        payload = redact(payload)
+        if isinstance(payload, dict):
+            payload.pop("next", None)
+            links = payload.get("links")
+            if isinstance(links, list):
+                payload["links"] = [
+                    link
+                    for link in links
+                    if not (
+                        isinstance(link, dict)
+                        and str(link.get("rel", "")).casefold() == "next"
+                    )
+                ]
+        return (
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            len(features),
+        )
+
+    root = ET.fromstring(content)
+    reported_count = next(
+        (
+            value
+            for name, value in root.attrib.items()
+            if name.rsplit("}", 1)[-1].lower() == "numberreturned"
+        ),
+        None,
+    )
+    count = int(reported_count) if reported_count and reported_count.isdigit() else -1
+    for element in root.iter():
+        for attribute in list(element.attrib):
+            if attribute.rsplit("}", 1)[-1].lower() == "next":
+                del element.attrib[attribute]
+    sanitized = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    for representation in secret_representations:
+        sanitized = sanitized.replace(representation.encode("utf-8"), b"[REDACTED]")
+    return sanitized, count
+
+
+def download_wfs_source(
+    source_key: str,
+    source: dict[str, Any],
+    force: bool,
+    api_key: str | None = None,
+) -> dict[str, Any] | None:
+    if source.get("authenticated") and not api_key:
+        LOG.warning(
+            "Skipping %s because %s is not available in this shell",
+            source["title"],
+            DATAFORDELER_WFS_KEY,
+        )
+        return None
+
+    source_dir = RAW / "phase-b" / source_key
+    marker = source_dir / "complete.json"
+    existing_pages = sorted(source_dir.glob("page_*.gml")) + sorted(
+        source_dir.glob("page_*.geojson")
+    )
+    if (
+        marker.exists()
+        and existing_pages
+        and not force
+    ):
+        previous = json.loads(marker.read_text(encoding="utf-8"))
+        if len(existing_pages) == int(previous.get("page_count", -1)):
+            return previous
+
+    source_dir.mkdir(parents=True, exist_ok=True)
+    marker.unlink(missing_ok=True)
+    for page in existing_pages:
+        page.unlink()
+
+    page_count = 0
+    feature_count = 0
+    offset = 0
+    while True:
+        params = {
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeNames": source["typename"],
+            "count": str(WFS_PAGE_SIZE),
+            "startIndex": str(offset),
+            "srsName": source["crs"],
+        }
+        if not source.get("authenticated"):
+            params["outputFormat"] = "application/json"
+        if api_key and source.get("authenticated"):
+            params["apikey"] = api_key
+        request_url = source["endpoint"] + "?" + urllib.parse.urlencode(params)
+        request = urllib.request.Request(
+            request_url, headers={"User-Agent": USER_AGENT}
+        )
+
+        response_content: bytes | None = None
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    response_content = response.read()
+                break
+            except urllib.error.HTTPError as error:
+                status = error.code
+                if status not in {401, 429} or attempt == 3:
+                    raise RuntimeError(
+                        f"WFS download failed for {source_key} at feature "
+                        f"{offset}: HTTP {status}"
+                    ) from None
+                time.sleep(5 * (2**attempt))
+            except (urllib.error.URLError, TimeoutError, OSError) as error:
+                raise RuntimeError(
+                    f"WFS download failed for {source_key} at feature "
+                    f"{offset}: {type(error).__name__}"
+                ) from None
+        if response_content is None:
+            raise RuntimeError(
+                f"WFS download returned no response for {source_key} at "
+                f"feature {offset}"
+            )
+
+        sanitized, returned = sanitize_wfs_page(
+            response_content,
+            api_key if source.get("authenticated") else None,
+        )
+        frame = gpd.read_file(io.BytesIO(sanitized))
+        if returned >= 0 and len(frame) != returned:
+            raise ValueError(
+                f"WFS page count mismatch for {source_key} at feature {offset}: "
+                f"response reports {returned}, parser read {len(frame)}"
+            )
+        returned = len(frame)
+        if returned == 0:
+            break
+
+        extension = "gml" if source.get("authenticated") else "geojson"
+        page_path = source_dir / f"page_{page_count:05d}.{extension}"
+        page_path.write_bytes(sanitized)
+        page_count += 1
+        feature_count += returned
+        offset += returned
+        LOG.info(
+            "Downloaded %s: %s features",
+            source_key,
+            feature_count,
+        )
+        if returned < WFS_PAGE_SIZE:
+            break
+
+    if not page_count:
+        raise ValueError(f"WFS source {source_key} returned no features")
+    result = {
+        "url": source["endpoint"],
+        "typename": source["typename"],
+        "path": str(source_dir.relative_to(ROOT)),
+        "download_date": datetime.now(UTC).date().isoformat(),
+        "feature_count": feature_count,
+        "page_count": page_count,
+        "sha256": hashlib.sha256(
+            "".join(
+                sha256_file(page)
+                for page in sorted(source_dir.glob("page_*"))
+            ).encode("ascii")
+        ).hexdigest(),
+    }
+    marker.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
 def download_sources(force: bool) -> dict[str, dict[str, Any]]:
     manifest = load_manifest()
 
@@ -265,6 +624,12 @@ def download_sources(force: bool) -> dict[str, dict[str, Any]]:
             layer, RAW / "eea" / filename, force, manifest.get(key)
         )
         save_manifest()
+    api_key = os.environ.get(DATAFORDELER_WFS_KEY)
+    for key, source in WFS_SOURCES.items():
+        source_record = download_wfs_source(key, source, force, api_key)
+        if source_record is not None:
+            manifest[f"phase_b_{key}"] = source_record
+            save_manifest()
     return manifest
 
 
@@ -382,6 +747,7 @@ def extend_extent_to_offshore_storage(
                 "to build offshore corridors."
             )
         corridors = []
+        offshore_sites: dict[str, Point] = {}
         for record in reader:
             if (record.get("role") or "").strip().lower() != "storage":
                 continue
@@ -393,6 +759,9 @@ def extend_extent_to_offshore_storage(
                 ) from error
             x, y = transformer.transform(lon, lat)
             storage_point = Point(x, y)
+            identifier = (record.get("id") or "").strip()
+            if identifier in {"greensand_nini_west", "bifrost_harald"}:
+                offshore_sites[identifier] = storage_point
             if extent_geometry.covers(storage_point):
                 continue
             coastal_point = nearest_points(land_geometry, storage_point)[0]
@@ -401,6 +770,19 @@ def extend_extent_to_offshore_storage(
                     corridor_half_width_m
                 )
             )
+    if {"greensand_nini_west", "bifrost_harald"} <= offshore_sites.keys():
+        landfalls = [
+            nearest_points(land_geometry, offshore_sites[identifier])[0]
+            for identifier in ("greensand_nini_west", "bifrost_harald")
+        ]
+        north_sea_corridor = MultiPoint(
+            [
+                offshore_sites["greensand_nini_west"],
+                offshore_sites["bifrost_harald"],
+                *landfalls,
+            ]
+        ).convex_hull.buffer(corridor_half_width_m)
+        corridors.append(north_sea_corridor)
     if corridors:
         return union_all([extent_geometry, *corridors])
     return extent_geometry
@@ -857,6 +1239,191 @@ def prepare_phase_a_layers(
     return output_path
 
 
+def wfs_source_pages(source_key: str) -> list[Path]:
+    source_dir = RAW / "phase-b" / source_key
+    pages = sorted(source_dir.glob("page_*.gml")) + sorted(
+        source_dir.glob("page_*.geojson")
+    )
+    return sorted(pages)
+
+
+def write_phase_b_layer(
+    output_path: Path,
+    layer_name: str,
+    frame: gpd.GeoDataFrame,
+    mask: BaseGeometry,
+) -> int:
+    clipped = clip_vector(frame, mask)
+    if clipped.empty:
+        return 0
+    write_gpkg_layer(output_path, layer_name, clipped)
+    return len(clipped)
+
+
+def wind_farm_category(status: Any) -> str:
+    normalized = str(status).strip().casefold()
+    if any(
+        marker in normalized
+        for marker in ("planned", "plan", "proposed", "announced", "application")
+    ):
+        return "planned"
+    if any(
+        marker in normalized
+        for marker in (
+            "production",
+            "operational",
+            "operation",
+            "construction",
+            "approved",
+            "consented",
+            "commissioning",
+            "built",
+        )
+    ):
+        return "barrier"
+    raise ValueError(
+        f"Unclassified EMODnet wind-farm status {status!r}; update the "
+        "explicit status mapping before using this dataset."
+    )
+
+
+def prepare_phase_b_layers(extent: gpd.GeoDataFrame) -> Path:
+    mask = extent.geometry.iloc[0]
+    output_path = PROCESSED / "phase_b.gpkg"
+    output_path.unlink(missing_ok=True)
+    feature_counts: dict[str, int] = {}
+
+    def append(layer_name: str, frame: gpd.GeoDataFrame) -> None:
+        feature_counts[layer_name] = feature_counts.get(layer_name, 0) + (
+            write_phase_b_layer(output_path, layer_name, frame, mask)
+        )
+
+    for source_key in WFS_SOURCES:
+        pages = wfs_source_pages(source_key)
+        if not pages:
+            if source_key in {"beach_protection", "fredskov"}:
+                LOG.warning(
+                    "No prepared Datafordeler layer for %s; its cost layer "
+                    "will be omitted",
+                    source_key,
+                )
+                continue
+            raise FileNotFoundError(
+                f"Raw WFS pages for {source_key} are missing; run "
+                "python -m src.acquire_data first."
+            )
+
+        for page in pages:
+            frame = gpd.read_file(page)
+            if frame.crs is None:
+                raise ValueError(f"WFS page has no CRS metadata: {page}")
+
+            if source_key == "drinking_water":
+                if "kategori" not in frame.columns:
+                    raise ValueError(
+                        "Drinking-water WFS is missing its verified "
+                        "'kategori' field"
+                    )
+                categories = frame["kategori"].astype(str).str.upper()
+                for category, layer in (
+                    ("OSD", "drinking_water_osd"),
+                    ("OD", "drinking_water_od"),
+                ):
+                    selected = frame.loc[categories == category]
+                    if not selected.empty:
+                        append(layer, selected)
+            elif source_key == "marine_plan":
+                if "zone_type" not in frame.columns:
+                    raise ValueError(
+                        "Marine-plan WFS is missing its verified "
+                        "'zone_type' field"
+                    )
+                categories = frame["zone_type"].astype(str)
+                for codes, layer in (
+                    ({"S"}, "marine_shipping"),
+                    ({"Ev", "Ei"}, "marine_renewables"),
+                    ({"R", "N"}, "marine_materials"),
+                    ({"Ek"}, "marine_cable_corridor"),
+                ):
+                    selected = frame.loc[categories.isin(codes)]
+                    if not selected.empty:
+                        append(layer, selected)
+            elif source_key == "offshore_wind":
+                frame = clip_vector(frame, mask)
+                if "status" not in frame.columns:
+                    raise ValueError(
+                        "EMODnet wind-farm WFS is missing its verified "
+                        "'status' field"
+                    )
+                categories = frame["status"].map(wind_farm_category)
+                planned = frame.loc[categories == "planned"]
+                barriers = frame.loc[categories == "barrier"]
+                if not planned.empty:
+                    append("offshore_wind_planned", planned)
+                if not barriers.empty:
+                    append("offshore_wind_barriers", barriers)
+            elif source_key == "munitions_points":
+                projected = frame.to_crs(TARGET_CRS)
+                projected.geometry = projected.geometry.buffer(500)
+                append("munitions_points", projected)
+            else:
+                layer = {
+                    "bnbo": "bnbo",
+                    "groundwater_catchments": "groundwater_catchments",
+                    "ancient_monuments_area": "ancient_monuments_area",
+                    "ancient_monuments_line": "ancient_monuments_line",
+                    "ancient_monuments_point": "ancient_monuments_point",
+                    "ancient_monument_protection": "ancient_monument_protection",
+                    "lake_protection_lines": "water_protection_lines",
+                    "stream_protection_lines": "water_protection_lines",
+                    "contaminated_v2": "contaminated_v2",
+                    "contaminated_v1": "contaminated_v1",
+                    "munitions_polygons": "munitions_barriers",
+                    "subsea_pipelines": "subsea_pipelines",
+                    "subsea_cables": "subsea_cables",
+                    "beach_protection": "beach_protection",
+                    "fredskov": "fredskov",
+                }.get(source_key)
+                if layer is None:
+                    raise ValueError(
+                        f"No phase-B preparation rule for {source_key!r}"
+                    )
+                append(layer, frame)
+
+    missing = [
+        layer
+        for layer in (
+            "drinking_water_osd",
+            "drinking_water_od",
+            "bnbo",
+            "groundwater_catchments",
+            "ancient_monuments_area",
+            "ancient_monuments_line",
+            "ancient_monuments_point",
+            "ancient_monument_protection",
+            "water_protection_lines",
+            "contaminated_v2",
+            "contaminated_v1",
+            "marine_shipping",
+            "marine_renewables",
+            "marine_materials",
+            "marine_cable_corridor",
+            "munitions_barriers",
+            "munitions_points",
+            "subsea_pipelines",
+            "subsea_cables",
+        )
+        if not feature_counts.get(layer)
+    ]
+    if missing:
+        raise ValueError(
+            "Approved phase-B sources produced no features in the analysis "
+            f"extent for required layers: {missing}"
+        )
+    LOG.info("Prepared phase-B layers: %s", feature_counts)
+    return output_path
+
+
 def read_zip_shapefile(zip_path: Path, extract_dir: Path) -> gpd.GeoDataFrame:
     shapefiles = list(extract_dir.rglob("*.shp"))
     if not shapefiles:
@@ -1071,6 +1638,20 @@ def write_source_register(manifest: dict[str, dict[str, Any]]) -> None:
             "ghsl_population_2020",
         ),
     ]
+    for source_key, source in WFS_SOURCES.items():
+        manifest_key = f"phase_b_{source_key}"
+        if manifest_key not in manifest:
+            continue
+        rows.append(
+            (
+                f"{source['title']} ({source['typename']})",
+                source["publisher"],
+                source["endpoint"] + "?service=WFS&request=GetCapabilities",
+                source["license"],
+                f"{source['crs']} (source and processed)",
+                manifest_key,
+            )
+        )
     content = [
         "# Data sources",
         "",
@@ -1105,6 +1686,10 @@ def write_source_register(manifest: dict[str, dict[str, Any]]) -> None:
             "extracted from the PBF lines layer; power lines are limited to "
             "tagged `power=line` ways with voltage of at least 132 kV, and "
             "pipelines to `man_made=pipeline` ways tagged `substance=gas`.",
+            "",
+            "Phase-B WFS pages are retained in `data/raw/phase-b/`; "
+            "Datafordeler request credentials are not included in the "
+            "manifest or the saved pages.",
             "",
             "## Hotspot coordinates and project metadata",
             "",
@@ -1207,9 +1792,11 @@ def prepare_data(
     )
     prepare_coast_and_extent(extent, country_land, foreign_land)
     prepare_osm(extent)
+    prepare_phase_a_layers(extent, {"forest", "power_lines", "pipelines"})
     prepare_protected_areas(extent)
     prepare_natura2000(extent)
     prepare_population(extent)
+    prepare_phase_b_layers(extent)
     if manifest:
         write_source_register(manifest)
     LOG.info("Data acquisition and preparation completed")

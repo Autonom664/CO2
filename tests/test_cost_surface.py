@@ -1,4 +1,5 @@
 import unittest
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,7 @@ from shapely.geometry import LineString, box
 from src.cost_surface import (
     build_cost_surface,
     dwelling_proximity_costs,
+    load_excluded_osm_ids,
     max_group_contribution,
     parallel_corridor_mask,
     population_costs,
@@ -28,18 +30,18 @@ class CostScoreTests(unittest.TestCase):
         self.costs = {
             "open_land": 1,
             "open_sea": 2,
-            "road_crossing": 3,
+            "road_major": 3,
             "building_barrier": 10,
             "population": {"minimum": 1, "maximum": 10},
         }
-        self.layers = {"roads": {"cost": "road_crossing"}}
+        self.layers = {"roads": {"cost": "road_major"}}
         self.barriers = ["building_barrier"]
 
     def test_accepts_scores_within_one_to_ten(self) -> None:
         validate_cost_scores(self.costs, self.layers, self.barriers)
 
     def test_rejects_area_score_outside_one_to_ten(self) -> None:
-        self.costs["road_crossing"] = 11
+        self.costs["road_major"] = 11
         with self.assertRaisesRegex(ValueError, "between 1 and 10"):
             validate_cost_scores(self.costs, self.layers, self.barriers)
 
@@ -130,7 +132,10 @@ class PhaseACostModelTests(unittest.TestCase):
                         geometry=[extent_geometry], crs="EPSG:25832"
                     ),
                     "land": gpd.GeoDataFrame(
-                        geometry=[extent_geometry], crs="EPSG:25832"
+                        geometry=[
+                            box(500_000, 6_200_000, 500_700, 6_200_800)
+                        ],
+                        crs="EPSG:25832",
                     ),
                 },
             )
@@ -179,7 +184,24 @@ class PhaseACostModelTests(unittest.TestCase):
                                 )
                         ],
                         crs="EPSG:25832",
-                    )
+                    ),
+                },
+            )
+            write_layers(
+                "phase_b.gpkg",
+                {
+                    "bnbo": gpd.GeoDataFrame(
+                        geometry=[
+                            box(500_600, 6_200_600, 500_700, 6_200_700)
+                        ],
+                        crs="EPSG:25832",
+                    ),
+                    "marine_cable_corridor": gpd.GeoDataFrame(
+                        geometry=[
+                            box(500_700, 6_200_700, 500_800, 6_200_800)
+                        ],
+                        crs="EPSG:25832",
+                    ),
                 },
             )
             write_layers(
@@ -216,6 +238,7 @@ class PhaseACostModelTests(unittest.TestCase):
                 "protected_nature_s3": 256,
                 "dwelling_proximity": 65536,
                 "parallel_corridor": 131072,
+                "marine_cable_corridor": 1048576,
             }
             config = {
                 "grid": {
@@ -235,6 +258,7 @@ class PhaseACostModelTests(unittest.TestCase):
                     "forest": 6,
                     "natura2000": 9,
                     "protected_nature": 8,
+                    "marine_cable_corridor": 1,
                     "population": {
                         "enabled": False,
                         "minimum": 1,
@@ -246,7 +270,7 @@ class PhaseACostModelTests(unittest.TestCase):
                         "max_score": 6,
                     },
                 },
-                "barriers": ["building_barrier"],
+                "barriers": ["building_barrier", "protected_barrier"],
                 "rasterization": {
                     "linear_all_touched": True,
                     "polygon_all_touched": False,
@@ -295,6 +319,22 @@ class PhaseACostModelTests(unittest.TestCase):
                         "class_bit": "protected_nature_s3",
                         "geometry": "polygon",
                     },
+                    "bnbo": {
+                        "file": "phase_b.gpkg",
+                        "layer": "bnbo",
+                        "cost": "protected_barrier",
+                        "class_bit": "protected_barrier",
+                        "geometry": "polygon",
+                        "optional": True,
+                    },
+                    "marine_cable_corridor": {
+                        "file": "phase_b.gpkg",
+                        "layer": "marine_cable_corridor",
+                        "cost": "marine_cable_corridor",
+                        "class_bit": "marine_cable_corridor",
+                        "geometry": "polygon",
+                        "optional": True,
+                    },
                 },
                 "combine_groups": {
                     "protected_areas": {
@@ -319,16 +359,31 @@ class PhaseACostModelTests(unittest.TestCase):
                         },
                     ],
                 },
-                "class_bits": bits,
+                "class_bits": bits
+                | {
+                    "protected_barrier": 524_288,
+                    "marine_cable_corridor": 1048576,
+                },
+                "discount_classes": ["marine_cable_corridor"],
             }
             config_path = root / "costs.yaml"
             config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-            cost_path = processed / "cost_surface_100m.tif"
+            validation_dir = processed / "validation"
+            validation_dir.mkdir()
+            published_outputs = {
+                "cost_surface_100m.tif": b"published surface",
+                "cost_class_mask_100m.tif": b"published class mask",
+                "cost_surface_class_statistics.csv": b"published statistics",
+                "cost_surface_metadata.json": b"published metadata",
+            }
+            for filename, content in published_outputs.items():
+                (processed / filename).write_bytes(content)
+            cost_path = validation_dir / "cost_surface_100m.tif"
             with (
                 patch("src.cost_surface.PROCESSED", processed),
                 patch("src.cost_surface.ROOT", root),
             ):
-                build_cost_surface(config_path, cost_path)
+                build_cost_surface(config_path, cost_path, ["123"])
 
             with rasterio.open(cost_path) as cost_raster:
                 costs = cost_raster.read(1)
@@ -340,14 +395,101 @@ class PhaseACostModelTests(unittest.TestCase):
                     cost_raster.transform, 500_450, 6_200_250
                 )
                 self.assertEqual(float(costs[barrier_row, barrier_col]), -9999)
+                protected_row, protected_col = rowcol(
+                    cost_raster.transform, 500_650, 6_200_650
+                )
+                self.assertEqual(float(costs[protected_row, protected_col]), -9999)
+                sea_row, sea_col = rowcol(
+                    cost_raster.transform, 500_750, 6_200_750
+                )
+                self.assertAlmostEqual(float(costs[sea_row, sea_col]), 0.4)
             with rasterio.open(
-                processed / "cost_class_mask_100m.tif"
+                validation_dir / "cost_class_mask_100m.tif"
             ) as class_raster:
                 class_mask = class_raster.read(1)
                 self.assertEqual(class_raster.dtypes[0], "uint32")
                 self.assertTrue(np.any(class_mask & bits["forest"]))
                 self.assertTrue(np.any(class_mask & bits["dwelling_proximity"]))
                 self.assertTrue(np.any(class_mask & bits["parallel_corridor"]))
+                self.assertTrue(
+                    np.any(class_mask & np.uint32(524_288))
+                )
+                self.assertTrue(
+                    np.any(class_mask & bits["marine_cable_corridor"])
+                )
+            for filename, content in published_outputs.items():
+                self.assertEqual((processed / filename).read_bytes(), content)
+            metadata = json.loads(
+                (validation_dir / "cost_surface_metadata.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(metadata["excluded_parallel_asset_osm_ids"], ["123"])
+            self.assertEqual(
+                metadata["discount_classes"], ["marine_cable_corridor"]
+            )
+
+
+class ExcludedOsmIdTests(unittest.TestCase):
+    def test_loads_all_ten_baltic_pipe_validation_ids(self) -> None:
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "validation"
+            / "baltic_pipe_osm.geojson"
+        )
+        expected = sorted(
+            [
+                "1055346860",
+                "1362960758",
+                "1392067292",
+                "1204845861",
+                "1095495854",
+                "1392191334",
+                "1392191336",
+                "1392191338",
+                "1055345076",
+                "1192369246",
+            ]
+        )
+
+        self.assertEqual(load_excluded_osm_ids(path), expected)
+
+    def test_loads_and_normalizes_ids_from_validation_geojson(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "osm_ids.geojson"
+            gpd.GeoDataFrame(
+                {"osm_ids": ["way/101,way/202"]},
+                geometry=[LineString([(0, 0), (1, 1)])],
+                crs="EPSG:4326",
+            ).to_file(path, driver="GeoJSON", index=False)
+
+            self.assertEqual(load_excluded_osm_ids(path), ["101", "202"])
+
+    def test_rasterization_excludes_only_matching_osm_way_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "assets.gpkg"
+            gpd.GeoDataFrame(
+                {"osm_id": [101, 202]},
+                geometry=[
+                    LineString([(0.5, 0.1), (0.5, 3.9)]),
+                    LineString([(2.5, 0.1), (2.5, 3.9)]),
+                ],
+                crs="EPSG:25832",
+            ).to_file(path, layer="pipelines", driver="GPKG", index=False)
+
+            mask = rasterize_layer(
+                path,
+                "pipelines",
+                from_origin(0, 4, 1, 1),
+                4,
+                4,
+                True,
+                "EPSG:25832",
+                ["101"],
+            )
+
+        self.assertEqual(int(mask[:, 0].sum()), 0)
+        self.assertGreater(int(mask[:, 2].sum()), 0)
 
 
 class RasterizeLayerTests(unittest.TestCase):

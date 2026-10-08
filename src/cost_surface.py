@@ -7,6 +7,7 @@ import csv
 import json
 import logging
 import math
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -43,11 +44,12 @@ def validate_cost_scores(
     layers: dict[str, Any],
     barriers: list[str],
 ) -> None:
+    barrier_names = set(barriers)
     score_names = {"open_land", "open_sea", "building_barrier"}
     score_names.update(
         str(layer["cost"])
         for layer in layers.values()
-        if "cost" in layer
+        if "cost" in layer and str(layer["cost"]) not in barrier_names
     )
     for name in sorted(score_names):
         if name not in costs:
@@ -374,9 +376,33 @@ def write_class_statistics(
         writer.writerows(rows)
 
 
+def load_excluded_osm_ids(path: Path) -> list[str]:
+    source = gpd.read_file(path)
+    id_columns = [name for name in ("osm_id", "osm_ids") if name in source]
+    if not id_columns:
+        raise ValueError(
+            f"{path} must contain an osm_id or osm_ids property"
+        )
+    excluded: set[str] = set()
+    for column in id_columns:
+        for value in source[column].dropna():
+            for item in str(value).split(","):
+                token = item.strip()
+                match = re.fullmatch(r"(?:way/)?(\d+)", token)
+                if not match:
+                    raise ValueError(
+                        f"Invalid OSM way ID {token!r} in {path}"
+                    )
+                excluded.add(match.group(1))
+    if not excluded:
+        raise ValueError(f"No OSM way IDs found in {path}")
+    return sorted(excluded)
+
+
 def build_cost_surface(
     config_path: Path = CONFIG,
     output_path: Path | None = None,
+    exclude_osm_ids: list[str] | None = None,
 ) -> Path:
     config = load_config(config_path)
     grid_config = config["grid"]
@@ -386,6 +412,18 @@ def build_cost_surface(
         config["layers"],
         [str(name) for name in config.get("barriers", [])],
     )
+    discount_classes = {
+        str(name) for name in config.get("discount_classes", [])
+    }
+    configured_classes = {
+        str(layer["cost"]) for layer in config["layers"].values()
+    }
+    unknown_discount_classes = discount_classes - configured_classes
+    if unknown_discount_classes:
+        raise ValueError(
+            "Discount classes have no configured input layer: "
+            f"{sorted(unknown_discount_classes)}"
+        )
     resolution = int(grid_config["resolution_m"])
     reference_resolution = int(grid_config["cost_reference_resolution_m"])
     target_crs = str(grid_config["crs"])
@@ -479,17 +517,40 @@ def build_cost_surface(
     )
 
     class_masks: dict[str, np.ndarray] = {}
+    barrier_class_masks: dict[str, np.ndarray] = {}
     parallel_asset_mask = np.zeros((height, width), dtype=bool)
     for name, layer_config in config["layers"].items():
         source_path = PROCESSED / layer_config["file"]
         if not source_path.exists():
+            if layer_config.get("optional", False):
+                LOG.warning(
+                    "Skipping optional cost layer %s; input is missing: %s",
+                    name,
+                    source_path,
+                )
+                continue
             raise FileNotFoundError(f"Required processed input is missing: {source_path}")
         geometry_type = layer_config["geometry"]
         if geometry_type not in {"linear", "polygon"}:
             raise ValueError(f"Unsupported geometry type for {name}: {geometry_type}")
+        source_layer = str(layer_config["layer"])
+        available_layers = {str(row[0]) for row in pyogrio.list_layers(source_path)}
+        if source_layer not in available_layers:
+            if layer_config.get("optional", False):
+                LOG.warning(
+                    "Skipping optional cost layer %s; layer %r is absent from %s",
+                    name,
+                    source_layer,
+                    source_path,
+                )
+                continue
+            raise ValueError(
+                f"Required source layer {source_layer!r} is missing from "
+                f"{source_path}"
+            )
         mask = rasterize_layer(
             source_path,
-            layer_config["layer"],
+            source_layer,
             transform,
             width,
             height,
@@ -511,7 +572,8 @@ def build_cost_surface(
                 f"Unsupported surface constraint for layer {name!r}: {surface}"
             )
         cost_key = str(layer_config["cost"])
-        if cost_key not in costs:
+        barrier_layer = cost_key in config.get("barriers", [])
+        if cost_key not in costs and not barrier_layer:
             raise ValueError(f"No configured cost for input class {cost_key!r}")
         if cost_key == "building_barrier":
             raise ValueError("Building barriers must not be declared as regular layers")
@@ -519,13 +581,25 @@ def build_cost_surface(
         if class_bit not in class_bits:
             raise ValueError(f"No class bit configured for layer {name!r}")
         class_mask[mask] |= int(class_bits[class_bit])
-        if cost_key not in class_masks:
+        if barrier_layer:
+            if cost_key not in barrier_class_masks:
+                barrier_class_masks[cost_key] = mask
+            else:
+                np.logical_or(
+                    barrier_class_masks[cost_key], mask,
+                    out=barrier_class_masks[cost_key],
+                )
+        elif cost_key not in class_masks:
             class_masks[cost_key] = mask
         else:
             np.logical_or(class_masks[cost_key], mask, out=class_masks[cost_key])
         if layer_config.get("parallel_asset", False):
             parallel_asset_mask |= mask
         del mask
+
+    for barrier_name, mask in barrier_class_masks.items():
+        cost_surface[mask] = nodata
+        record_class(barrier_name, mask, "barrier", impassable=True)
 
     combine_groups = config.get("combine_groups", {})
     grouped_classes: set[str] = set()
@@ -573,8 +647,25 @@ def build_cost_surface(
             continue
         score = float(costs[cost_key]) * cost_scale
         applicable = mask & np.isfinite(cost_surface) & (cost_surface != nodata)
-        cost_surface[applicable] += score
-        record_class(cost_key, mask, score)
+        if cost_key in discount_classes:
+            previous = cost_surface[applicable].copy()
+            minimum_cost = float(costs["open_land"]) * cost_scale
+            cost_surface[applicable] = np.maximum(
+                minimum_cost,
+                previous - score,
+            )
+            total_contribution = float(
+                (cost_surface[applicable] - previous).sum()
+            )
+        else:
+            cost_surface[applicable] += score
+            total_contribution = None
+        record_class(
+            cost_key,
+            mask,
+            score,
+            total_contribution=total_contribution,
+        )
 
     proximity_config = costs.get("dwelling_proximity", {})
     if proximity_config.get("enabled", True):
@@ -597,6 +688,15 @@ def build_cost_surface(
 
     parallel_config = config.get("parallel_corridor", {})
     if parallel_config.get("enabled", False):
+        excluded_ids = sorted(
+            {
+                str(identifier)
+                for identifier in [
+                    *parallel_config.get("exclude_osm_ids", []),
+                    *(exclude_osm_ids or []),
+                ]
+            }
+        )
         for asset in parallel_config.get("assets", []):
             source_path = PROCESSED / asset["file"]
             if not source_path.exists():
@@ -611,12 +711,7 @@ def build_cost_surface(
                 height,
                 bool(config["rasterization"]["linear_all_touched"]),
                 target_crs,
-                [
-                    str(identifier)
-                    for identifier in parallel_config.get(
-                        "exclude_osm_ids", []
-                    )
-                ],
+                excluded_ids,
             ).astype(bool)
             parallel_asset_mask |= asset_mask & extent_mask
         valid_surface = np.isfinite(cost_surface) & (cost_surface != nodata)
@@ -711,6 +806,7 @@ def build_cost_surface(
             cost_reference_resolution_m=reference_resolution,
             cost_scale_factor=cost_scale,
             combine_rule="additive",
+            discount_classes=",".join(sorted(discount_classes)),
             barrier_value=nodata,
             population_method=(
                 "Population averaged to grid and scaled to analysis-cell area; "
@@ -747,6 +843,7 @@ def build_cost_surface(
         "height": height,
         "bounds": bounds,
         "combine_rule": "additive",
+        "discount_classes": sorted(discount_classes),
         "nodata_and_barrier_value": nodata,
         "traversable_cells": int(
             np.count_nonzero(np.isfinite(cost_surface) & (cost_surface != nodata))
@@ -759,6 +856,10 @@ def build_cost_surface(
         "statistics_csv": str(stats_path.relative_to(ROOT)),
         "class_mask_raster": str(class_output_path.relative_to(ROOT)),
     }
+    if exclude_osm_ids:
+        metadata["excluded_parallel_asset_osm_ids"] = sorted(
+            {str(identifier) for identifier in exclude_osm_ids}
+        )
     metadata_path = output_path.with_name("cost_surface_metadata.json")
     metadata_path.write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
@@ -774,9 +875,31 @@ def main() -> None:
     )
     parser.add_argument("--config", type=Path, default=CONFIG)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--exclude-osm-ids-from",
+        type=Path,
+        help="GeoJSON with an osm_ids property listing OSM way IDs to omit from corridor discounts.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Directory for the cost raster and its class, statistics, and metadata sidecars.",
+    )
     args = parser.parse_args()
+    if args.exclude_osm_ids_from and not args.output_dir:
+        parser.error("--exclude-osm-ids-from requires --output-dir")
+    if args.output and args.output_dir:
+        parser.error("--output and --output-dir are mutually exclusive")
+    config = load_config(args.config)
+    resolution = int(config["grid"]["resolution_m"])
+    output_path = args.output
+    if args.output_dir:
+        output_path = args.output_dir / f"cost_surface_{resolution}m.tif"
+    excluded_ids: list[str] | None = None
+    if args.exclude_osm_ids_from:
+        excluded_ids = load_excluded_osm_ids(args.exclude_osm_ids_from)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    build_cost_surface(args.config, args.output)
+    build_cost_surface(args.config, output_path, excluded_ids)
 
 
 if __name__ == "__main__":

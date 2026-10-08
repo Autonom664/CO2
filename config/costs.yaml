@@ -17,11 +17,13 @@ web:
 
 barriers:
   - building_barrier
+  - protected_barrier
 
 costs:
   open_land: 1
   open_sea: 2
-  road_crossing: 3
+  drinking_water_osd: 4
+  drinking_water_od: 2
   road_major: 4
   road_minor: 2
   railway_crossing: 5
@@ -33,6 +35,21 @@ costs:
   watercourse_crossing: 4
   lake: 7
   wetland: 7
+  groundwater_catchment: 3
+  ancient_monument_protection: 5
+  water_protection: 5
+  contaminated_v2: 6
+  contaminated_v1: 3
+  marine_shipping: 6
+  marine_renewables: 8
+  marine_materials: 6
+  marine_cable_corridor: 1
+  offshore_wind_planned: 7
+  munitions_points: 8
+  subsea_pipelines: 4
+  subsea_cables: 5
+  beach_protection: 7
+  fredskov: 7
   dwelling_proximity:
     enabled: true
     max_distance_m: 200
@@ -98,6 +115,169 @@ layers:
     cost: wetland
     geometry: polygon
     surface: land
+  drinking_water_osd:
+    file: phase_b.gpkg
+    layer: drinking_water_osd
+    cost: drinking_water_osd
+    class_bit: drinking_water
+    geometry: polygon
+    optional: true
+  drinking_water_od:
+    file: phase_b.gpkg
+    layer: drinking_water_od
+    cost: drinking_water_od
+    class_bit: drinking_water
+    geometry: polygon
+    optional: true
+  bnbo:
+    file: phase_b.gpkg
+    layer: bnbo
+    cost: protected_barrier
+    class_bit: protected_barrier
+    geometry: polygon
+    optional: true
+  groundwater_catchments:
+    file: phase_b.gpkg
+    layer: groundwater_catchments
+    cost: groundwater_catchment
+    class_bit: groundwater_catchments
+    geometry: polygon
+    optional: true
+  ancient_monuments_area:
+    file: phase_b.gpkg
+    layer: ancient_monuments_area
+    cost: protected_barrier
+    class_bit: protected_barrier
+    geometry: polygon
+    optional: true
+  ancient_monuments_line:
+    file: phase_b.gpkg
+    layer: ancient_monuments_line
+    cost: protected_barrier
+    class_bit: protected_barrier
+    geometry: linear
+    optional: true
+  ancient_monuments_point:
+    file: phase_b.gpkg
+    layer: ancient_monuments_point
+    cost: protected_barrier
+    class_bit: protected_barrier
+    geometry: linear
+    optional: true
+  ancient_monument_protection:
+    file: phase_b.gpkg
+    layer: ancient_monument_protection
+    cost: ancient_monument_protection
+    class_bit: ancient_monument_protection
+    geometry: polygon
+    optional: true
+  water_protection_lines:
+    file: phase_b.gpkg
+    layer: water_protection_lines
+    cost: water_protection
+    class_bit: water_protection
+    geometry: linear
+    optional: true
+  contaminated_v2:
+    file: phase_b.gpkg
+    layer: contaminated_v2
+    cost: contaminated_v2
+    class_bit: contaminated_land
+    geometry: polygon
+    optional: true
+  contaminated_v1:
+    file: phase_b.gpkg
+    layer: contaminated_v1
+    cost: contaminated_v1
+    class_bit: contaminated_land
+    geometry: polygon
+    optional: true
+  marine_shipping:
+    file: phase_b.gpkg
+    layer: marine_shipping
+    cost: marine_shipping
+    class_bit: marine_shipping
+    geometry: polygon
+    optional: true
+  marine_renewables:
+    file: phase_b.gpkg
+    layer: marine_renewables
+    cost: marine_renewables
+    class_bit: marine_renewables
+    geometry: polygon
+    optional: true
+  marine_materials:
+    file: phase_b.gpkg
+    layer: marine_materials
+    cost: marine_materials
+    class_bit: marine_materials
+    geometry: polygon
+    optional: true
+  marine_cable_corridor:
+    file: phase_b.gpkg
+    layer: marine_cable_corridor
+    cost: marine_cable_corridor
+    class_bit: marine_cable_corridor
+    geometry: polygon
+    optional: true
+  offshore_wind_planned:
+    file: phase_b.gpkg
+    layer: offshore_wind_planned
+    cost: offshore_wind_planned
+    class_bit: offshore_wind
+    geometry: polygon
+    optional: true
+  offshore_wind_barriers:
+    file: phase_b.gpkg
+    layer: offshore_wind_barriers
+    cost: protected_barrier
+    class_bit: protected_barrier
+    geometry: polygon
+    optional: true
+  munitions_barriers:
+    file: phase_b.gpkg
+    layer: munitions_barriers
+    cost: protected_barrier
+    class_bit: protected_barrier
+    geometry: polygon
+    optional: true
+  munitions_points:
+    file: phase_b.gpkg
+    layer: munitions_points
+    cost: munitions_points
+    class_bit: munitions
+    geometry: polygon
+    optional: true
+  subsea_pipelines:
+    file: phase_b.gpkg
+    layer: subsea_pipelines
+    cost: subsea_pipelines
+    class_bit: subsea_infrastructure
+    geometry: linear
+    optional: true
+  subsea_cables:
+    file: phase_b.gpkg
+    layer: subsea_cables
+    cost: subsea_cables
+    class_bit: subsea_infrastructure
+    geometry: linear
+    optional: true
+  beach_protection:
+    file: phase_b.gpkg
+    layer: beach_protection
+    cost: beach_protection
+    class_bit: coastal_protection
+    geometry: polygon
+    surface: land
+    optional: true
+  fredskov:
+    file: phase_b.gpkg
+    layer: fredskov
+    cost: fredskov
+    class_bit: coastal_protection
+    geometry: polygon
+    surface: land
+    optional: true
   natura2000_habitats:
     file: natura2000.gpkg
     layer: habitats
@@ -128,6 +308,9 @@ combine_groups:
     members: [natura2000, protected_nature]
     rule: max
 
+discount_classes:
+  - marine_cable_corridor
+
 parallel_corridor:
   enabled: true
   inner_distance_m: 50
@@ -144,7 +327,7 @@ parallel_corridor:
 class_bits:
   open_land: 1
   open_sea: 2
-  road_crossing: 4
+  drinking_water: 4
   railway_crossing: 8
   watercourse_crossing: 16
   urban_area: 32
@@ -161,6 +344,19 @@ class_bits:
   forest: 65536
   dwelling_proximity: 131072
   parallel_corridor: 262144
+  protected_barrier: 524288
+  groundwater_catchments: 1048576
+  ancient_monument_protection: 2097152
+  water_protection: 4194304
+  contaminated_land: 8388608
+  marine_shipping: 16777216
+  marine_renewables: 33554432
+  marine_materials: 67108864
+  marine_cable_corridor: 134217728
+  offshore_wind: 268435456
+  munitions: 536870912
+  subsea_infrastructure: 1073741824
+  coastal_protection: 2147483648
 
 route_classes:
   natura2000: [natura2000_habitats, natura2000_birds]
@@ -170,3 +366,16 @@ route_classes:
   forest: [forest]
   dwelling_proximity: [dwelling_proximity]
   parallel_corridor: [parallel_corridor]
+  drinking_water: [drinking_water]
+  groundwater_catchment: [groundwater_catchments]
+  ancient_monument_protection: [ancient_monument_protection]
+  water_protection: [water_protection]
+  contaminated_land: [contaminated_land]
+  marine_shipping: [marine_shipping]
+  marine_renewables: [marine_renewables]
+  marine_materials: [marine_materials]
+  marine_cable_corridor: [marine_cable_corridor]
+  offshore_wind: [offshore_wind]
+  munitions: [munitions]
+  subsea_infrastructure: [subsea_infrastructure]
+  coastal_protection: [coastal_protection]

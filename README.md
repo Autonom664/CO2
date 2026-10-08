@@ -8,8 +8,8 @@ and a minimum spanning network.
 ## Project status
 
 The base open datasets and processing pipeline are present. A curated set of
-12 illustrative candidate locations is in `data/input/hotspots.csv`: eight
-emitters/CO2 hubs and four potential storage sites. Several storage points
+15 illustrative candidate locations is in `data/input/hotspots.csv`: eight
+emitters/CO2 hubs and seven potential storage sites. Several storage points
 are explicitly labelled as area or field proxies, not confirmed well
 locations. Rebuild the extent and cost surface before routing so the Nini West
 offshore corridor is included.
@@ -49,8 +49,17 @@ python -m src.acquire_data
 ```
 
 The first run downloads the source archives into `data/raw/`, queries the
-EEA's Denmark Natura 2000 service, then writes the prepared datasets to
-`data/processed/`. OSM features are read from Geofabrik's Denmark GeoPackage
+EEA's Denmark Natura 2000 service and the Phase B WFS sources, then writes
+the prepared datasets to `data/processed/`. Datafordeler sources require
+`DATAFORDELER_API_KEY` in the current PowerShell session; the downloader
+skips those optional layers with a warning if it is unset. Load the Windows
+user variable without displaying it:
+
+```powershell
+$env:DATAFORDELER_API_KEY = [Environment]::GetEnvironmentVariable("DATAFORDELER_API_KEY", "User")
+```
+
+OSM features are read from Geofabrik's Denmark GeoPackage
 export in spatially filtered batches; the earlier PBF download is not needed
 for preparation. The global GHSL 100 m archive is large. To separate the
 steps, use `--download-only` and `--prepare-only`; use `--force` with the
@@ -73,8 +82,10 @@ so route accumulation remains comparable when resolution changes.
 Initial cost scores in `config/costs.yaml` use a validated 1–10 scale and are
 subjective, editable assumptions, not monetary estimates. Buildings remain
 impassable barriers. Overlapping non-barrier classes add their scores;
-buildings are barriers, and cells outside the buffered study extent are
-NoData. Linear features are rasterized with `all_touched: true`; polygon
+configured barrier classes are impassable, and cells outside the buffered
+study extent are NoData. Marine cable-corridor zones reduce the combined cell
+cost by their configured score, with a floor at the open-land base cost.
+Linear features are rasterized with `all_touched: true`; polygon
 classes use the pixel-center rule by default. Population values are averaged
 onto the analysis grid and positive land-cell values are scaled by quantile.
 The script writes a GeoTIFF, per-class coverage/cost statistics, and metadata.
@@ -84,11 +95,20 @@ Build the current surface with:
 python -m src.cost_surface
 ```
 
+The Baltic Pipe validation surface can be built separately after preparation.
+It excludes the reference pipeline ways from the parallel-corridor discount
+and writes its raster and sidecars only under `data/processed/validation/`:
+
+```powershell
+python -m src.cost_surface --exclude-osm-ids-from validation/baltic_pipe_osm.geojson --output-dir data/processed/validation
+```
+
 Least-cost routing will use
 `skimage.graph.MCP_Geometric`: one cost-distance run per emitter/hub, with
 traceback to each storage candidate. The 8-by-4 source-to-storage matrix
-contains 32 directed candidate routes, and a minimum spanning tree connects
-the 12 hotspots using those route costs.
+contains 56 directed candidate routes (eight sources × seven storage
+candidates). A minimum spanning tree connects all 15 hotspots using the
+costs of all 105 hotspot pairs.
 
 With the candidate hotspot input in place, run:
 
@@ -97,7 +117,7 @@ python -m src.routing
 python -m src.build_web
 ```
 
-The router validates 12 unique hotspots with `id,name,lon,lat,role` columns,
+The router validates 15 unique hotspots with `id,name,lon,lat,role` columns,
 snaps points only to traversable cells within the configured maximum, computes
 the source-to-storage routes, and writes the minimum-spanning network and
 route-class lengths. Existing untyped hotspot CSVs retain the all-pairs mode.

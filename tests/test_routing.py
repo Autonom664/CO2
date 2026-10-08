@@ -79,7 +79,6 @@ class RoutingTests(unittest.TestCase):
             {
                 "open_land": 1,
                 "open_sea": 2,
-                "road_crossing": 4,
                 "railway_crossing": 8,
                 "watercourse_crossing": 16,
                 "urban_area": 32,
@@ -154,7 +153,6 @@ class RoutingTests(unittest.TestCase):
         class_bits = {
             "open_land": 1,
             "open_sea": 2,
-            "road_crossing": 4,
             "railway_crossing": 8,
             "watercourse_crossing": 16,
             "urban_area": 32,

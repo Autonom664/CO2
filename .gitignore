@@ -29,6 +29,10 @@ data/raw/*
 # Regenerated geospatial analysis data
 data/processed/*.tif
 data/processed/*.gpkg
+data/processed/*.csv
+data/processed/*.json
+data/processed/*.geojson
+data/processed/validation/
 
 # Generated map assets (python -m src.corridors, python -m src.build_web).
 # Docker builds from the working tree, so these are not needed in git.

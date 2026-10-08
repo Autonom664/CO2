@@ -1,7 +1,12 @@
 import csv
+import io
+import json
 import tempfile
 import unittest
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 import geopandas as gpd
@@ -11,10 +16,13 @@ from shapely.geometry import Point, box
 
 from src.acquire_data import (
     exclude_foreign_land_from_extent,
+    download_wfs_source,
     extend_extent_to_offshore_storage,
     osm_tag_value,
     prepare_coast_and_extent,
+    sanitize_wfs_page,
     voltage_in_volts,
+    wind_farm_category,
 )
 
 
@@ -41,6 +49,27 @@ class OffshoreExtentTests(unittest.TestCase):
             self.assertTrue(expanded.covers(Point(520_000, 6_200_000)))
             self.assertTrue(expanded.covers(Point(510_000, 6_200_000)))
             self.assertFalse(expanded.covers(Point(510_000, 6_203_000)))
+
+    def test_north_sea_extent_connects_nini_and_bifrost_corridors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            hotspots_path = Path(temporary) / "hotspots.csv"
+            transformer = Transformer.from_crs(
+                "EPSG:25832", "EPSG:4326", always_xy=True
+            )
+            nini = transformer.transform(520_000, 6_200_000)
+            bifrost = transformer.transform(530_000, 6_200_000)
+            with hotspots_path.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["id", "role", "lon", "lat"])
+                writer.writerow(["greensand_nini_west", "storage", *nini])
+                writer.writerow(["bifrost_harald", "storage", *bifrost])
+
+            land = box(499_000, 6_199_000, 501_000, 6_201_000)
+            expanded = extend_extent_to_offshore_storage(
+                land.buffer(1_000), land, hotspots_path, 1_000
+            )
+
+            self.assertTrue(expanded.covers(Point(525_000, 6_200_000)))
 
     def test_open_sea_layer_excludes_foreign_land(self) -> None:
         full_extent = box(0, 0, 4, 4)
@@ -100,6 +129,204 @@ class OsmInfrastructureParsingTests(unittest.TestCase):
         self.assertEqual(voltage_in_volts("400"), 400)
         self.assertIsNone(voltage_in_volts("unknown"))
         self.assertIsNone(voltage_in_volts(None))
+
+    def test_sanitizes_datafordeler_pagination_credentials(self) -> None:
+        body = (
+            b'<wfs:FeatureCollection xmlns:wfs="http://www.opengis.net/wfs/2.0" '
+            b'numberReturned="0" '
+            b'next="https://example.invalid/wfs?apikey=private-value" />'
+        )
+
+        sanitized, count = sanitize_wfs_page(body, "private-value")
+
+        self.assertEqual(count, 0)
+        self.assertNotIn(b"private-value", sanitized)
+        self.assertNotIn(b"apikey", sanitized)
+
+    def test_sanitizes_credentials_and_next_links_in_json_wfs_pages(self) -> None:
+        api_key = "test-only-private-value"
+        body = json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [],
+                "next": f"https://example.invalid/wfs?apikey={api_key}",
+                "links": [
+                    {"rel": "next", "href": f"?apikey={api_key}"},
+                    {"rel": "self", "href": "?page=1"},
+                ],
+            }
+        ).encode("utf-8")
+
+        sanitized, count = sanitize_wfs_page(body, api_key)
+        payload = json.loads(sanitized)
+
+        self.assertEqual(count, 0)
+        self.assertNotIn(api_key.encode("utf-8"), sanitized)
+        self.assertNotIn("next", payload)
+        self.assertEqual(payload["links"], [{"rel": "self", "href": "?page=1"}])
+
+    def test_classifies_known_wind_farm_statuses(self) -> None:
+        self.assertEqual(wind_farm_category("Production"), "barrier")
+        self.assertEqual(wind_farm_category("Approved"), "barrier")
+        self.assertEqual(wind_farm_category("Planned"), "planned")
+        with self.assertRaisesRegex(ValueError, "Unclassified"):
+            wind_farm_category("Unmapped status")
+
+
+class WfsDownloadTests(unittest.TestCase):
+    @staticmethod
+    def geojson_page(identifiers: list[int]) -> bytes:
+        return json.dumps(
+            {
+                "type": "FeatureCollection",
+                "crs": {
+                    "type": "name",
+                    "properties": {"name": "EPSG:25832"},
+                },
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [500_000 + index, 6_200_000],
+                        },
+                        "properties": {"id": identifier},
+                    }
+                    for index, identifier in enumerate(identifiers)
+                ],
+            }
+        ).encode("utf-8")
+
+    def test_downloads_all_pages_using_start_index(self) -> None:
+        pages = [
+            self.geojson_page([1, 2]),
+            self.geojson_page([3]),
+        ]
+        requests: list[str] = []
+
+        def open_page(request, timeout):
+            requests.append(request.full_url)
+            return io.BytesIO(pages.pop(0))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch("src.acquire_data.ROOT", root),
+                patch("src.acquire_data.RAW", root / "data" / "raw"),
+                patch("src.acquire_data.WFS_PAGE_SIZE", 2),
+                patch("src.acquire_data.urllib.request.urlopen", open_page),
+            ):
+                record = download_wfs_source(
+                    "sample",
+                    {
+                        "endpoint": "https://example.invalid/wfs",
+                        "typename": "sample:layer",
+                        "crs": "EPSG:25832",
+                        "title": "Sample layer",
+                    },
+                    False,
+                )
+
+            offsets = [
+                parse_qs(urlsplit(url).query)["startIndex"][0]
+                for url in requests
+            ]
+            self.assertEqual(offsets, ["0", "2"])
+            self.assertIsNotNone(record)
+            if record is None:
+                self.fail("WFS download returned no manifest record")
+            self.assertEqual(record["feature_count"], 3)
+            self.assertEqual(record["page_count"], 2)
+            self.assertTrue(
+                (root / "data" / "raw" / "phase-b" / "sample" / "complete.json")
+                .is_file()
+            )
+
+    def test_retries_auth_failure_and_saves_sanitized_gml(self) -> None:
+        api_key = "test-only-private-value"
+        response_body = (
+            b'<wfs:FeatureCollection xmlns:wfs="http://www.opengis.net/wfs/2.0" '
+            b'xmlns:gml="http://www.opengis.net/gml/3.2" '
+            b'xmlns:t="urn:test" numberReturned="1" '
+            b'next="https://example.invalid/wfs?apikey=test-only-private-value">'
+            b'<wfs:member><t:feature gml:id="f.1"><t:geom>'
+            b'<gml:Point srsName="urn:ogc:def:crs:EPSG::25832">'
+            b'<gml:pos>500000 6200000</gml:pos></gml:Point>'
+            b'</t:geom></t:feature></wfs:member></wfs:FeatureCollection>'
+        )
+        attempts = 0
+
+        def open_page(request, timeout):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise HTTPError(
+                    request.full_url, 401, "Unauthorized", Message(), None
+                )
+            return io.BytesIO(response_body)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch("src.acquire_data.ROOT", root),
+                patch("src.acquire_data.RAW", root / "data" / "raw"),
+                patch("src.acquire_data.time.sleep"),
+                patch("src.acquire_data.urllib.request.urlopen", open_page),
+            ):
+                record = download_wfs_source(
+                    "authenticated_sample",
+                    {
+                        "endpoint": "https://example.invalid/wfs",
+                        "typename": "sample:layer",
+                        "crs": "EPSG:25832",
+                        "title": "Sample authenticated layer",
+                        "authenticated": True,
+                    },
+                    False,
+                    api_key,
+                )
+
+            source_dir = root / "data" / "raw" / "phase-b" / "authenticated_sample"
+            saved_page = (source_dir / "page_00000.gml").read_bytes()
+            marker = (source_dir / "complete.json").read_text(encoding="utf-8")
+            self.assertEqual(attempts, 2)
+            self.assertIsNotNone(record)
+            if record is None:
+                self.fail("WFS download returned no manifest record")
+            self.assertEqual(record["feature_count"], 1)
+            self.assertNotIn(api_key.encode("utf-8"), saved_page)
+            self.assertNotIn(b"next=", saved_page)
+            self.assertNotIn(api_key, marker)
+
+    def test_surfaces_non_retryable_http_errors_without_saving_partial_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def forbidden(request, timeout):
+                raise HTTPError(
+                    request.full_url, 403, "Forbidden", Message(), None
+                )
+
+            with (
+                patch("src.acquire_data.ROOT", root),
+                patch("src.acquire_data.RAW", root / "data" / "raw"),
+                patch("src.acquire_data.urllib.request.urlopen", forbidden),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "HTTP 403"):
+                    download_wfs_source(
+                        "forbidden",
+                        {
+                            "endpoint": "https://example.invalid/wfs",
+                            "typename": "sample:layer",
+                            "crs": "EPSG:25832",
+                            "title": "Forbidden layer",
+                        },
+                        False,
+                    )
+
+            source_dir = root / "data" / "raw" / "phase-b" / "forbidden"
+            self.assertFalse((source_dir / "complete.json").exists())
+            self.assertEqual(list(source_dir.glob("page_*")), [])
 
 
 if __name__ == "__main__":
