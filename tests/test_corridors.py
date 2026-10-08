@@ -55,6 +55,14 @@ class CorridorTests(unittest.TestCase):
         self.assertEqual(len(cleaned.interiors), 1)
         self.assertAlmostEqual(cleaned.area, 100_000_000 - 16_000_000)
 
+    def test_parallel_runs_match_sequential_runs_in_order(self) -> None:
+        cells = [self.start, self.end, (0, 20)]
+        sequential = list(corridors.accumulated_costs(self.cost, cells, workers=1))
+        parallel = list(corridors.accumulated_costs(self.cost, cells, workers=2))
+        self.assertEqual(len(parallel), 3)
+        for a, b in zip(sequential, parallel):
+            np.testing.assert_array_equal(a, b)
+
 
 if __name__ == "__main__":
     unittest.main()

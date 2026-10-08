@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,37 @@ def accumulated_cost(mcp_cost: np.ndarray, cell: tuple[int, int]) -> np.ndarray:
     graph = MCP_Geometric(mcp_cost, fully_connected=True)
     costs, _ = graph.find_costs([cell])
     return costs
+
+
+_WORKER_COST: np.ndarray | None = None
+
+
+def _init_worker(mcp_cost: np.ndarray) -> None:
+    global _WORKER_COST
+    _WORKER_COST = mcp_cost
+
+
+def _worker_accumulated_cost(cell: tuple[int, int]) -> np.ndarray:
+    return accumulated_cost(_WORKER_COST, cell)
+
+
+def accumulated_costs(
+    mcp_cost: np.ndarray, cells: list[tuple[int, int]], workers: int
+):
+    """Yield one accumulated-cost surface per cell, in order.
+
+    Each run needs about 1 GB on the 100 m grid, so a few workers are enough.
+    """
+    if workers <= 1 or len(cells) <= 1:
+        for cell in cells:
+            yield accumulated_cost(mcp_cost, cell)
+        return
+    with ProcessPoolExecutor(
+        max_workers=min(workers, len(cells)),
+        initializer=_init_worker,
+        initargs=(mcp_cost,),
+    ) as pool:
+        yield from pool.map(_worker_accumulated_cost, cells)
 
 
 def corridor_polygon(
@@ -95,6 +128,7 @@ def compute_corridors(
     tolerances: tuple[float, ...] = (0.01, 0.03),
     simplify_m: float = 150.0,
     min_hole_km2: float = 2.0,
+    workers: int = min(4, os.cpu_count() or 1),
 ) -> Path:
     if not tolerances or min(tolerances) <= 0:
         raise ValueError("Corridor tolerances must be positive")
@@ -126,18 +160,23 @@ def compute_corridors(
 
     targets = list({end["id"]: end for _, end in pairs}.values())
     target_costs: dict[str, np.ndarray] = {}
-    for end in targets:
-        LOG.info("Cost distance from %s", end["name"])
-        target_costs[end["id"]] = accumulated_cost(
-            mcp_cost, (end["row"], end["col"])
-        ).astype(np.float32)
+    LOG.info("Cost distance from %d storage sites, %d workers", len(targets), workers)
+    for end, costs in zip(
+        targets,
+        accumulated_costs(mcp_cost, [(e["row"], e["col"]) for e in targets], workers),
+    ):
+        target_costs[end["id"]] = costs.astype(np.float32)
+        del costs
 
     records: list[dict[str, Any]] = []
     geometries = []
     cell_area_km2 = resolution * resolution / 1_000_000
-    for start in list({start["id"]: start for start, _ in pairs}.values()):
-        LOG.info("Cost distance from %s", start["name"])
-        from_start = accumulated_cost(mcp_cost, (start["row"], start["col"]))
+    starts = list({start["id"]: start for start, _ in pairs}.values())
+    for start, from_start in zip(
+        starts,
+        accumulated_costs(mcp_cost, [(s["row"], s["col"]) for s in starts], workers),
+    ):
+        LOG.info("Corridors from %s", start["name"])
         for pair_start, end in pairs:
             if pair_start["id"] != start["id"]:
                 continue
@@ -190,6 +229,10 @@ def main() -> None:
     parser.add_argument("--min-hole-km2", type=float, default=2.0)
     parser.add_argument("--simplify-m", type=float, default=150.0)
     parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument(
+        "--workers", type=int, default=min(4, os.cpu_count() or 1),
+        help="Parallel cost-distance runs, about 1 GB of memory each",
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -199,6 +242,7 @@ def main() -> None:
         tolerances=tuple(float(v) for v in args.tolerances.split(",")),
         simplify_m=args.simplify_m,
         min_hole_km2=args.min_hole_km2,
+        workers=args.workers,
     )
 
 
