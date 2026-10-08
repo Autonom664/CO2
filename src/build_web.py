@@ -353,6 +353,8 @@ def build_web(
             class_mask = mask_source.read(1)
             if not np.issubdtype(class_mask.dtype, np.unsignedinteger):
                 raise ValueError(f"Class mask must be unsigned integers, got {class_mask.dtype}")
+            # Widen to 64 bits so bit tests above bit 31 work on every platform.
+            class_mask = class_mask.astype(np.uint64, copy=False)
 
         display_crs = "EPSG:3857"
         display_resolution = int(config.get("web", {}).get("display_resolution_m", 250))
@@ -389,7 +391,7 @@ def build_web(
             bit = config["class_bits"].get(class_name)
             if bit is None:
                 raise ValueError(f"Missing class-bit mapping for {class_name!r}")
-            source_layer = (class_mask & int(bit)) != 0
+            source_layer = (class_mask & np.uint64(bit)) != 0
             destination_layer = np.zeros(
                 (display_height, display_width), dtype=np.uint8
             )
