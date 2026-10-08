@@ -71,6 +71,54 @@ function pickFile(accept) {
   });
 }
 
+// ---- run-time estimate --------------------------------------------------
+
+// Seconds per full cost-distance run on the 250 m grid: 1.1 s measured on a
+// 2026 laptop; replaced by this browser's own timing after the first Run.
+const TIMING_KEY = "co2-routing-seconds-per-accumulation";
+const COST_SURFACE_SECONDS = 2;
+
+function secondsPerAccumulation() {
+  try {
+    const stored = Number(localStorage.getItem(TIMING_KEY));
+    if (stored > 0) return { seconds: stored, measured: true };
+  } catch {
+    // Storage blocked: use the default.
+  }
+  return { seconds: 1.1, measured: false };
+}
+
+export function recordAccumulationSeconds(seconds) {
+  try {
+    localStorage.setItem(TIMING_KEY, String(seconds));
+  } catch {
+    // Storage blocked: the estimate stays at the default.
+  }
+  updateRunEstimate();
+}
+
+function runEstimate() {
+  const sites = state.scenario.sites.filter((site) => site.enabled);
+  const sources = sites.filter((site) => site.role === "source").length;
+  const { seconds, measured } = secondsPerAccumulation();
+  const routes = sources * seconds;
+  const network = sites.length * seconds;
+  const total = COST_SURFACE_SECONDS + routes + network;
+  return { sources, sites: sites.length, seconds, measured, routes, network, total };
+}
+
+function updateRunEstimate() {
+  const target = document.getElementById("settings-run-status");
+  if (!target || !state.scenario) return;
+  const e = runEstimate();
+  const round = (value) => (value < 10 ? value.toFixed(1) : Math.round(value));
+  target.textContent = `Recalculation takes about ${round(e.total)} s in this browser`
+    + (e.measured ? " (measured here)." : " (estimate until the first run).");
+  target.title =
+    `Cost surface ≈ ${COST_SURFACE_SECONDS} s; routes: ${e.sources} sources × ${round(e.seconds)} s; ` +
+    `network: ${e.sites} sites × ${round(e.seconds)} s. The map stays usable while it runs.`;
+}
+
 // ---- state changes ------------------------------------------------------
 
 function changed({ rerender = false } = {}) {
@@ -80,6 +128,7 @@ function changed({ rerender = false } = {}) {
   badge.textContent = count ? `${count} change${count === 1 ? "" : "s"}` : "Published model";
   badge.classList.toggle("modified", count > 0);
   document.getElementById("settings-stale").hidden = false;
+  updateRunEstimate();
   if (rerender) renderActiveTab();
   for (const listener of state.listeners) listener(state.scenario);
 }
@@ -301,6 +350,12 @@ function helpTab() {
     element("p", {}, WEIGHT_SCALE_HELP),
     element("p", {}, "The route between two sites is the path with the lowest total cost, like ArcGIS Cost Path. " +
       "The network joins all sites with the cheapest set of links, like Optimal Region Connections."),
+    element("h3", {}, "How long does a recalculation take?"),
+    element("p", {}, "In this browser: seconds. The time shown next to Run is measured on this computer after the " +
+      "first run. The browser works on a 250 m grid (about 4.5 million cells)."),
+    element("p", {}, "The published 100 m model (28 million cells) is rebuilt with Python: about 25–30 minutes for " +
+      "cost surface, routes, corridors, validation and map tiles, and several hours if all source data is " +
+      "downloaded and prepared again. In ArcGIS Pro, expect several minutes per source at 100 m for all of Denmark."),
     element("h3", {}, "ArcGIS Pro equivalents"),
     element("table", { class: "glossary" },
       element("thead", {}, element("tr", {}, element("th", {}, "Here"), element("th", {}, "ArcGIS Pro"))),
@@ -429,8 +484,19 @@ function buildPanel() {
         element("h2", {}, "Model settings"),
         element("span", { id: "settings-changes", class: "changes-badge" }, "Published model")),
       element("button", { type: "button", class: "close", "aria-label": "Close settings", onclick: () => togglePanel(false) }, "✕")),
-    element("p", { id: "settings-stale", class: "notice", hidden: true },
-      "Settings changed. Press Run to recalculate the routes."),
+    element("div", { id: "settings-stale", class: "notice", hidden: true },
+      element("strong", {}, "Settings changed. "),
+      "Press Run to recalculate the routes in this browser (see the time estimate below). ",
+      element("details", { class: "inline-details" },
+        element("summary", {}, "Why is it fast here, and slow in the full model?"),
+        element("p", {},
+          "The browser recalculates on a 250 m grid (about 4.5 million cells) in seconds. The published " +
+          "routes use a 100 m grid (28 million cells) and are rebuilt with Python: about 25–30 minutes " +
+          "for cost surface, routes, corridors, validation and map tiles, and several hours if the source " +
+          "data must be downloaded and prepared again. The 100 m routes stay on the map as the reference."),
+        element("p", {},
+          "In ArcGIS Pro the same steps are Weighted Sum (cost surface), Distance Accumulation (per " +
+          "source) and Optimal Path As Line. Expect minutes per source at 100 m for all of Denmark."))),
     element("nav", { class: "settings-tabs", role: "tablist" },
       ...TABS.map(([id, text]) => element("button", {
         type: "button", role: "tab", "data-tab": id, "aria-selected": String(id === activeTab),
@@ -482,12 +548,15 @@ async function init() {
   renderActiveTab();
   changed();
   if (!describeChanges(state.scenario, state.defaults).length) markResultsCurrent();
+  updateRunEstimate();
   toggle.addEventListener("click", () => togglePanel());
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") stopAddingSite(); });
   const attach = () => window.co2Map.on("click", handleMapClick);
   if (window.co2Map) attach();
   else window.addEventListener("co2map-ready", attach, { once: true });
-  window.co2Settings = { currentScenario, onScenarioChange, markResultsCurrent, togglePanel };
+  window.co2Settings = {
+    currentScenario, onScenarioChange, markResultsCurrent, togglePanel, recordAccumulationSeconds,
+  };
 }
 
 init();

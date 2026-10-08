@@ -323,3 +323,6 @@ button.danger { color: #b3261e; border-color: #e6b8b5; }
 .route-all { margin: .4rem 0; font-size: .8rem; }
 .route-row { padding: .3rem .45rem; }
 .route-title { font-size: .78rem; }
+.inline-details summary { cursor: pointer; color: #1f6f5c; margin-top: 4px; }
+.inline-details p { margin: 4px 0; }
+.settings-footer #settings-run-status { font-size: 0.8rem; }
