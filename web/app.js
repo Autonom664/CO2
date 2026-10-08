@@ -393,6 +393,16 @@ function selectRoute(map, feature, { zoom = true, popup = true } = {}) {
   }
 }
 
+function showSidebarTab(id) {
+  for (const button of document.querySelectorAll(".sidebar-tabs button")) {
+    button.setAttribute("aria-selected", String(button.dataset.tab === id));
+  }
+  for (const panel of document.querySelectorAll(".sidebar-tab")) panel.hidden = panel.id !== id;
+}
+
+document.querySelectorAll(".sidebar-tabs button").forEach((button) =>
+  button.addEventListener("click", () => showSidebarTab(button.dataset.tab)));
+
 function setupRouteList(map, routes, networkKeys) {
   const container = document.getElementById("route-list");
   const filter = document.getElementById("route-filter");
@@ -415,11 +425,16 @@ function setupRouteList(map, routes, networkKeys) {
     filter.appendChild(option);
   }
 
+  const showAll = document.getElementById("route-show-all");
   function render() {
     container.replaceChildren();
     const selected = filter.value;
+    // Picking one source shows all its options; otherwise only the best per
+    // source unless "show every option" is ticked, to keep the list short.
     const visible = features.filter((feature) =>
-      !selected || feature.properties.from_id === selected
+      (!selected || feature.properties.from_id === selected)
+      && (selected || showAll.checked
+        || cheapestBySource.get(feature.properties.from_id) === routeKey(feature.properties))
     );
     for (const feature of visible) {
       const properties = feature.properties;
@@ -435,8 +450,9 @@ function setupRouteList(map, routes, networkKeys) {
       meta.className = "route-meta";
       const sea = Number(properties.km_open_sea || 0);
       meta.textContent =
-        `${Number(properties.length_km).toFixed(0)} km · cost ${Number(properties.accumulated_cost).toFixed(0)}`
+        `${Number(properties.length_km).toFixed(0)} km · ${Number(properties.accumulated_cost).toFixed(0)}`
         + (sea > 0 ? ` · ${sea.toFixed(0)} km sea` : "");
+      meta.title = "Length · accumulated cost · km at sea";
       row.append(title, meta);
       const badges = document.createElement("span");
       badges.className = "route-badges";
@@ -452,8 +468,12 @@ function setupRouteList(map, routes, networkKeys) {
     }
   }
   filter.addEventListener("change", render);
+  showAll.addEventListener("change", render);
   render();
   document.getElementById("route-list-wrap").hidden = false;
+  const tabButton = document.getElementById("routes-tab-button");
+  tabButton.textContent = `Routes (${features.length})`;
+  tabButton.hidden = false;
 
   const linked = new URLSearchParams(window.location.search).get("route");
   if (linked) {
@@ -461,8 +481,14 @@ function setupRouteList(map, routes, networkKeys) {
     const feature = features.find((candidate) =>
       candidate.properties.from_id === fromId && candidate.properties.to_id === toId
     );
-    if (feature) selectRoute(map, feature);
-    else setStatus(`Route ${linked} from the link is not in this build.`, "warning");
+    if (feature) {
+      showSidebarTab("routes-tab");
+      if (cheapestBySource.get(feature.properties.from_id) !== routeKey(feature.properties)) {
+        showAll.checked = true;
+        render();
+      }
+      selectRoute(map, feature);
+    } else setStatus(`Route ${linked} from the link is not in this build.`, "warning");
   }
 }
 

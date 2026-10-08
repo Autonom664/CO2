@@ -94,7 +94,15 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
                 "window.co2Map.querySourceFeatures('storage_areas').length"
             )
             check(areas > 0, "storage licence areas loaded", f"{areas} features")
-        has_routes = page.locator("#route-list-wrap").is_visible()
+        has_routes = page.locator("#routes-tab-button").is_visible()
+        if has_routes:
+            # The Map layers tab is the default, and the route list starts
+            # with the best option per source only.
+            page.click("#routes-tab-button")
+            default_rows = page.locator(".route-row").count()
+            check(default_rows == sources, "route list starts with the best route per source",
+                  f"{default_rows} rows, expected {sources}")
+            page.check("#route-show-all")
 
         if not has_routes:
             check("not" in page.locator("#route-layers").inner_text().lower()
@@ -179,6 +187,7 @@ def run(base: str, routes: int, sources: int, shots: Path) -> int:
             else:
                 check(False, "hotspot with ETS data found on the map")
 
+        page.click('.sidebar-tabs button[data-tab="layers-tab"]')
         groups = page.locator("#input-layers details").count()
         check(groups >= 3, "layer groups are collapsible", f"{groups} groups")
         page.evaluate("document.querySelectorAll('#input-layers details').forEach(d => d.open = true)")

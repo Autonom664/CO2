@@ -311,3 +311,15 @@ button.danger { color: #b3261e; border-color: #e6b8b5; }
 @media (max-width: 700px) { .settings-panel { width: 100%; } }
 .layer-row[hidden], .site-row[hidden], .settings-group[hidden] { display: none; }
 .settings-body .muted { color: #55635f; }
+
+/* ---- Sidebar tabs and compact route rows ------------------------------- */
+.sidebar-tabs { display: flex; gap: 2px; margin: .4rem 0 .6rem; border-bottom: 1px solid #ffffff2a; }
+.sidebar-tabs button {
+  flex: 1; border: none; background: none; color: #bdd0cd; padding: .45rem .3rem;
+  cursor: pointer; font-size: .85rem; border-bottom: 3px solid transparent;
+}
+.sidebar-tabs button[aria-selected="true"] { color: #fff; border-bottom-color: #ffd23f; font-weight: 600; }
+.sidebar-tab[hidden] { display: none; }
+.route-all { margin: .4rem 0; font-size: .8rem; }
+.route-row { padding: .3rem .45rem; }
+.route-title { font-size: .78rem; }
