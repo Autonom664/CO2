@@ -187,7 +187,7 @@ function renderSummary(result, name) {
     <h3>Results: ${name}</h3>
     <p class="muted">Orange: your best routes (dashed: other options). Magenta: your network. Both at 250 m;
     the published 100 m routes and network stay on the map for comparison.
-    ${changedCount ? `<strong>${changedCount} source${changedCount > 1 ? "s" : ""} changed their best storage site.</strong>`
+    ${changedCount ? `<strong>${changedCount === 1 ? "1 source changed its" : `${changedCount} sources changed their`} best storage site.</strong>`
       : "Every source keeps its published best storage site."}</p>
     ${result.problems.length ? `<details class="notice"><summary>${result.problems.length} site${
       result.problems.length > 1 ? "s were" : " was"} left out (click for details)</summary>${
