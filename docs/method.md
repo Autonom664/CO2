@@ -19,7 +19,9 @@ nominal population detail.
 `config/costs.yaml` is the authoritative configuration for scores, resolution,
 barrier value, class bits, rasterization rules, and display scale. Initial
 scores are subjective relative assumptions, not monetary cost estimates.
-They use the requested placeholder classes:
+The table below shows the **initial (baseline) scores**, kept in
+`config/costs_baseline.yaml`. The scores in use since 2026-10-08 are the
+recalibrated ones; see **Recalibration** below.
 
 | Class | Initial score (1–10, per 250 m reference traversal) | Treatment |
 |---|---:|---|
@@ -145,8 +147,51 @@ API key), the class is skipped and has no map toggle.
 | Cable corridors | Marine plan (Ek) | −1 | Discount applied after the additive sum, floored at the open-land base |
 
 Where a class has two source scores (OSD/OD, V2/V1, pipelines/cables), the
-map badge shows the range. Phase B uses all 32 bits of the `uint32` class
-mask.
+map badge shows the range. With the recalibration classes the mask needs 35
+bits, so it is stored as `uint64`.
+
+### Recalibration to published practice (D12, D14)
+
+The scores were recalibrated on 2026-10-08 against published CO2 and gas
+pipeline practice (`docs/routing_practice.md`). Each score is read as
+"cost multiplier − 1" relative to open land, which is the form used by
+Weißenburger et al. Permit-risk classes (Natura 2000, §3 nature, fredskov,
+BNBO, monuments) were left unchanged.
+
+| Change | Baseline | Now | Reason |
+|---|---|---|---|
+| Score range | 1–10 | 0–10 | 0 means no extra cost |
+| Wetland | 7 | 1 | marsh about 2× (IEAGHG / Kinder Morgan) |
+| Urban area | 8 | 1 | construction only; safety is in population risk |
+| Forest (OSM) | 6 | 0.5 | clearing cost |
+| Major / minor road | 4 / 2 | 5 / 0.5 | HDD vs open-cut crossings |
+| Watercourse crossing | 4 | 1 | small streams are open-cut |
+| Population density | 1–10 | 0–1 | populated about 2× |
+| Alongside infrastructure | ×0.8 | ×0.9 | literature about ×0.91 |
+| Drinking-water areas OD / OSD (D14) | 2 / 4 | 0 / 0.5 | crossed in practice; together they covered 87.5% of land and made land dearer than sea |
+| Groundwater catchments (D14) | 3 | 0.5 | as above |
+| **New: landfall** | — | 10 | land cells touching open sea; stands in for a shore-approach HDD |
+| **New: CO2 safety, population risk** | — | 0–5 | people within 1 km (focal sum), more than 50 people, quantile-scaled |
+
+**No stacking of overlapping classes.** These groups take the **highest**
+member score instead of the sum:
+- `wet_nature`: wetland, §3 nature, Natura 2000
+- `forest_group`: forest, fredskov
+- `people`: urban area, population density, near buildings, population risk
+
+**Measured effect** on the Baltic Pipe check (unbiased validation surface;
+`validation/results/c14_*.json`):
+
+| Metric | Baseline | Recalibrated without D14 | Recalibrated (in use) |
+|---|---|---|---|
+| Length vs as-built (299.6 km) | +10% | +9% | +3.5% |
+| Median / p90 offset | 19.8 / 39.8 km | 18.8 / 36.9 km | 13.1 / 32.0 km |
+| As-built inside the 3% corridor | 37% | 42% | 45% |
+
+The remaining difference is a crossing of Jutland and Funen 20–30 km
+further north than the as-built line. The population-risk term avoids
+villages that the real pipeline passed. That is a deliberate safety
+preference, not a fit to this one pipeline.
 
 ## Hotspot model and routing
 
